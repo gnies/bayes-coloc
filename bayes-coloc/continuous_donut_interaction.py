@@ -68,7 +68,7 @@ class DonutInteraction(MCMC):
             lxy -= ln(dist)
 
             # compute log of joint intensity
-            nc = (radius/scale)**2
+            nc = radius/scale
             df = 2
 
             # distributes as non central chi (without square)
@@ -157,7 +157,7 @@ def log_noncentral_chi_pdf(y, df, nc):
     noncentral chi-distribution evaluated at y.
     """
     # change of variables $x = y**2$
-    output = ncx2.logpdf(y**2, df, nc)
+    output = ncx2.logpdf(y**2, df, nc**2)
     output += ln(2*(y))
     np.nan_to_num(output, copy=False, nan=-np.inf)
     return output

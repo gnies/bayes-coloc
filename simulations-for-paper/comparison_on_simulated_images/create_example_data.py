@@ -85,6 +85,13 @@ for (i, setting) in enumerate(settings):
     # Save the images adding setting number to the file name
     imwrite(f"./data/channel_A_setting_{i+1}.tif", channel_0)
     imwrite(f"./data/channel_B_setting_{i+1}.tif", channel_1)
+
+    # Save true parameters and data
+    data = true_params
+    data["n_gamma"] = n_gamma
+    data["n_mu"] = n_mu
+    data["n_nu"] = n_nu
+    np.save(f"./data/true_params_setting_{i+1}.npy", data)
     
     # Just to be sure, the multicolor image can be plotted 
     ax = plt.gca()

@@ -14,7 +14,6 @@ class MCMC:
                  param_proposal=lambda p: p,
                  verbose=False,
                  save_latent_trajectory=False,
-                 start_with_optimal_matching=False
                  ):
         """ Initialize the MCMC sampler
         Parameters
@@ -71,36 +70,8 @@ class MCMC:
         self.ln_mu_index = lambda i, param: ln_mu(self.x[i], param)
         self.ln_nu_index = lambda j, param: ln_nu(self.y[j], param)
 
-        # we store the latent state as a collection of trajectories in the path space, initially all points are unpaired 
-        if start_with_optimal_matching:
-            #### not yet working
-            cost_matrix = np.empty((len(x)+1, len(y)+1))
-            cost_matrix[:-1, :-1] = self.ln_gamma_index(np.arange(len(x)).reshape(-1, 1), np.arange(len(y)).reshape(1, -1), start_param)
-            cost_matrix[-1, :-1] = self.ln_nu_index(np.arange(len(y)), start_param)
-            cost_matrix[:-1, -1] = self.ln_mu_index(np.arange(len(x)), start_param)
-            cost_matrix[-1, -1] = 0
-            a = np.ones(len(x))
-            a = np.append(a, len(y))
-            b = np.ones(len(y))
-            b = np.append(b, len(x))
-            pi = emd(a, b, cost_matrix, numItermax=100000)
-
-            almost_one = np.isclose(pi, 1, atol=1e-2)
-            I, J = np.where(almost_one)
-            n_pairs = pi[-1, :-1]
-            n_pairs = np.round(n_pairs)
-            n_pairs = n_pairs[0]
-            if n_pairs > 1:
-                I_extra = np.ones(n_pairs-1)*self.nx
-                J_extra = np.arange(n_pairs-1)
-                I = np.append(I, I_extra)
-                J = np.append(J, J_extra)
-
-            self.paths = np.array([I, J], dtype=int).T
-
-        else:
-            self.paths = [[i, len(y)] for i in range(len(x))] + [[len(x), j] for j in range(len(y))] 
-            self.paths = np.array(self.paths)
+        self.paths = [[i, len(y)] for i in range(len(x))] + [[len(x), j] for j in range(len(y))] 
+        self.paths = np.array(self.paths)
 
 
         # here we store the trajectory of the parameters

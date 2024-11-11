@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools", "wheel", "numpy", "scipy"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bayes_coloc"
+version = "0.0.1"
+description = ""
+authors = [
+    { name = "Giacomo Nies", email = "giacomo.nies@gmail.com" }
+]
+license = { text = "MIT" }
+readme = "README.md"
+
+[tool.setuptools]
+packages = ["bayes_coloc"]
+include-package-data = false
+

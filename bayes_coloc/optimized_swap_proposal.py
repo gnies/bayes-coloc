@@ -2,55 +2,33 @@ import numpy as np
 from math import lgamma
 from tqdm import tqdm
 from icecream import ic
-import matplotlib.pyplot as plt
 from numpy import log as ln
-from ot import emd
-from latent_state import LatentState
+from .latent_state import LatentState
 
-class MCM
+class MCMC:
     def __init__(self, x, y,
-                 ln_gamma, ln_mu, ln_nu,
-                 start_param,
-                 swap_proposal_params,
+                 l_xy, l_x, l_y,
+                 start_params,
+                 params_swap,
                  param_log_prior,
-                 param_proposal,
-                 swap_proposal_parameters,
+                 params_proposal,
                  verbose=False,
                  save_latent_trajectory=False,
                  ):
-        """ Initialize the MCMC sampler
-        Parameters
-        ----------
-        x : array-like
-            The first set of points
-        y : array-like
-            The second set of points
-        ln_gamma : function
-            The logartithm of the intensity function of the paired point process.
-            The function needs to have three arguments: two point coordinates x, y and a parameter dictionary.
-            The function needs to be vectorized in the first two arguments.
-            The third argument needs to be a dictionary with the following keys: 'lam_gamma', 'lam_mu', 'lam_nu'.
-            Additional parameters are also allowed.
-        ln_mu : function
-            The logartithm of the intensity function of the first point process. 
-            The function needs to be vectorized in the first argument. Needs two inputs: a point coordinate x and a parameter dictionary.
-            The second argument needs to be a dictionary with the following keys: 'lam_gamma', 'lam_mu', 'lam_nu'.
-            Other parameters are also allowed.
-        ln_nu : function
-            The logartithm of the intensity function of the second point process. 
-            The function needs to have two arguments: a point coordinate y and a parameter dictionary. Needs to be vectorized in the first argument.
-            The second argument needs to be a dictionary with the following keys: 'lam_gamma', 'lam_mu', 'lam_nu'.
-            Other parameters are also allowed.
-        start_param : dict
-            The initial parameters for the model. 
-        param_proposal : function
-            A function that proposes a new parameter given the current parameter. By default, the parameter remains unchanged
-        param_log_prior : function
-            The prior distribution for the parameters. By default, it is a the constant function 1. 
-        save_latent_state_trajectory : bool
-            If True, the latent state trajectory is saved. Else only some relevant statistics are saved.
-            
         """
+        x: list of x coordinates
+        y: list of y coordinates
+        l_xy: function that takes two coordinates and returns log likelihood of a pair, third argument is a dictionary with parameters
+        l_x: function that takes one coordinate and returns log likelihood of a single x, second argument is a dictionary with parameters
+        l_y: function that takes one coordinate and returns log likelihood of a single y, second argument is a dictionary with parameters
+        start_params: dictionary with starting parameters. Needs to have entries "lam_gamma", "lam_mu", "lam_nu"
+        params_swap: dictionary with parameters for the swap proposal. Needs to have entries "alpha", "beta", "gamma" equal to start_params.
+        param_log_prior: function that takes a dictionary with parameters and returns the log prior
+        param_proposal: function that takes a dictionary with parameters and returns a new proposal, needs to be a symmetric proposal.
+        verbose: if True, print debug information
+        save_latent_trajectory: if True, save the latent trajectory
+        """
+
         # set verbosity
         if not verbose:
             ic.disable()
@@ -63,24 +41,23 @@ class MCM
         self.ny = len(y)
         self.param_proposal = param_proposal
 
-        self.ln_gamma = ln_gamma
-        self.ln_mu = ln_mu
-        self.ln_nu = ln_nu
+        self.l_xy = l_xy
+        self.l_x = l_x
+        self.l_y = l_y
+
         self.param_log_prior = param_log_prior
 
         # index versions of the functions
-        self.ln_gamma_index = lambda i, j, param: ln_gamma(self.x[i], self.y[j], param)
-        self.ln_mu_index = lambda i, param: ln_mu(self.x[i], param)
-        self.ln_nu_index = lambda j, param: ln_nu(self.y[j], param)
+        self.l_xy_index = lambda i, j, param: l_xy(self.x[i], self.y[j], param)
+        self.l_x_index = lambda i, param: l_x(self.x[i], param)
+        self.l_y_index = lambda j, param: l_y(self.y[j], param)
 
-        self.latent_state = LatentState(self.nx, self.ny) # need to add things here 
 
+        # check if swap_proposal_params have the same intensity as the start_param
+        self.check_start_params(start_params, params_swap)
 
         # here we store the trajectory of the parameters
         self.param_trajectory = [start_param]
-
-        # we track the log probability of each state (up to unknown constant)
-        self.probs = []
 
         # we track how often a move is accepted in the latent space and in the parameter space
         self.n_accepted_latent = 0
@@ -95,14 +72,27 @@ class MCM
         if self.save_latent_trajectory:
             self.latent_trajectory = []
 
-        # initialize the trajectory
+        ##### initialize the latent state #####
+
+        # create cost that will be used for the swap proposal in the latent state
+        proposal_cost = np.empty((self.nx+1, self.ny+1))
+        for i in range(self.nx):
+            for j in range(self.ny):
+                proposal_cost[i, j] = -self.l_xy_index(i, j, params_swap)
+        for i in range(self.nx):
+            proposal_cost[i, self.ny] = -self.l_x_index(i, params_swap)
+        for j in range(self.ny):
+            proposal_cost[self.nx, j] = -self.l_y_index(j, params_swap)
+
+        alpha, beta, gamma = start_params['alpha'], start_params['beta'], start_params['gamma']
+        self.latent_state = LatentState(self.nx, self.ny, n, m, alpha, beta, gamma , proposal_cost)
+
+        #### initialize the trajectory
         path = self.latent_state.numpy_path()
-        self.update_trajectory(start_param, path, accepted_latent=False, accepted_param=False,
+        self.save_to_trajectory(start_param, path, accepted_latent=False, accepted_param=False,
                 save_latent=self.save_latent_trajectory)
         
-    def run(self, n_samples=10000, burn_in=1000, seed=None):
-        if seed is not None:
-            np.random.seed(seed)
+    def run(self, n_samples=10000, burn_in=1000):
             
         # burn-in period
         for _ in tqdm(range(burn_in), desc='Burn-in period'):
@@ -112,7 +102,6 @@ class MCM
             # remove burn-in samples from the trajectory
             self.param_trajectory = self.param_trajectory[burn_in:]
             self.pair_count_trajectory = self.pair_count_trajectory[burn_in:]
-            self.probs = self.probs[burn_in:]
             self.edge_freq_matrix = np.zeros((self.nx+1, self.ny+1))
             if self.save_latent_trajectory:
                 self.latent_state_trajectory = self.latent_state_trajectory[burn_in:]
@@ -159,24 +148,18 @@ class MCM
         log_acceptance_ratio = - self.cost(i0, j1, current_param) - self.cost(i1, j0, current_param) + self.cost(i0, j0, current_param) + self.cost(i1, j1, current_param)
 
         # balance ratio
-        log_acceptance_ratio += swap_log_prob - reverse_swap_log_prob
+        log_acceptance_ratio +=  reverse_swap_log_prob - swap_log_prob
         u = ln(np.random.random())
         accepted = u < log_acceptance_ratio
         
-        # print some information for debugging
-        acceptance_prob = np.exp(log_acceptance_ratio)
-        rewerse_swap_prob = np.exp(reverse_swap_log_prob)
-        swap_prob = np.exp(swap_log_prob)
-        ic(k0, k1, i0, j0, i1, j1, reverse_swap_prob, swap_prob, acceptance_prob, accepted)
         if accepted:
             # do swap
             self.latent_state.do_swap(k0, k1)
 
         # update trajectory
         paths = self.latent_state.numpy_path()
-        self.update_trajectory(current_param, paths, accepted, accepted_param=False,
+        self.save_to_trajectory(current_param, paths, accepted, accepted_param=False,
                 save_latent=self.save_latent_trajectory)
-            
         return accepted
 
     def MH_move_for_parameter(self):
@@ -193,10 +176,10 @@ class MCM
             current_param = proposed_param
 
             # update latent state
-            lam_gamma, lam_mu, lam_nu = current_param['lam_gamma'], current_param['lam_mu'], current_param['lam_nu']
-            self.latent_state.update_intensity(lam_mu, lam_nu, lam_gamma)
+            alpha, beta, gamma = current_param['alpha'], current_param['beta'], current_param['gamma']
+            self.latent_state.update_intensities(alpha, beta, gamma)
 
-        self.update_trajectory(current_param, paths, accepted_latent=False, accepted_param=accepted,
+        self.save_to_trajectory(current_param, paths, accepted_latent=False, accepted_param=accepted,
                 save_latent=self.save_latent_trajectory)
         return accepted
 
@@ -204,7 +187,7 @@ class MCM
     def cost(self, i, j, param):
         i = np.array(i)
         j = np.array(j)
-        lam_gamma, lam_nu, lam_mu = param['lam_gamma'], param['lam_nu'], param['lam_mu']
+        alpha, beta, gamma = param['alpha'], param['beta'], param['gamma']
 
         i = np.array(i)
         j = np.array(j)
@@ -220,47 +203,26 @@ class MCM
         i_m = np.minimum(i, n_x-1)
         j_m = np.minimum(j, n_y-1)
 
-        ps = np.where(pair, self.ln_gamma_index(i_m, j_m, param), 0)
+        ps = np.where(pair, self.l_xy_index(i_m, j_m, param), 0)
+        ps[pair] += ln(gamma)
 
-        ps = np.where(single_a, self.ln_mu_index(i_m, param), ps)
-        ps = np.where(single_b, self.ln_nu_index(j_m, param), ps)
+        ps = np.where(single_a, self.l_x_index(i_m, param), ps)
+        ps[single_a] += ln(alpha)
 
-        ps -= lam_gamma/(n_x+n_y)
-        ps -= lam_mu/(n_x+n_y)
-        ps -= lam_nu/(n_x+n_y)
+        ps = np.where(single_b, self.l_y_index(j_m, param), ps)
+        ps[single_b] += ln(beta)
+
+        ps -= gamma/(n_x+n_y)
+        ps -= alpha/(n_x+n_y)
+        ps -= beta/(n_x+n_y)
 
         ps -= lgamma(n_x+1)/(n_x+n_y)
         ps -= lgamma(n_y+1)/(n_x+n_y)
 
         ps += self.param_log_prior(param)/(n_x+n_y)
 
-        # nan are assumed to have cost -inf
-        np.nan_to_num(ps, copy=False, nan=-np.inf)
-
-        return ps
+        return -ps
     
-    def disallowed_swaps(self, k1, k2, paths):
-        """ We only allow swaps that effectively change the paths """
-        I, J = paths.T
-        k1 = np.array(k1)
-        k2 = np.array(k2)
-        I, J = paths.T
-        i1, j1 = I[k1], J[k1]
-        i2, j2 = I[k2], J[k2]
-        disallowed_x = (i1 == i2)
-        disallowed_y = (j1 == j2)
-        res = np.logical_or(disallowed_x, disallowed_y)
-        return res
-    
-    def plot_pair_count(self, ax=None):
-        n_max = np.minimum(self.nx, self.ny)
-        bins = np.arange(n_max+2)-0.5
-        if ax is None:
-            fig, ax = plt.subplots()
-        ax.hist(self.pair_count_trajectory, bins=bins, density=True)
-        ax.set_xlabel("Number of pairs")
-        ax.set_ylabel("Frequency")
-
     def EE(self):
         chain_length = np.sum(self.edge_freq_matrix)
         return self.edge_freq_matrix/chain_length
@@ -269,7 +231,7 @@ class MCM
         chain_length = np.sum(self.edge_freq_matrix)/(self.nx+self.ny)
         return self.edge_freq_matrix[:-1, :-1]/chain_length
 
-    def update_trajectory(self, params, paths, accepted_latent, accepted_param, save_latent):
+    def save_to_trajectory(self, params, paths, accepted_latent, accepted_param, save_latent):
         """ update the trajectory with the new state """
         self.param_trajectory.append(params)
         if save_latent:
@@ -278,7 +240,6 @@ class MCM
         n_pairs = np.sum(np.logical_and(paths[:, 0] < self.nx, paths[:, 1] < self.ny))
         self.pair_count_trajectory.append(n_pairs)
         log_prob = np.sum(self.cost(paths[:, 0], paths[:, 1], params))
-        self.probs.append(log_prob)
         self.n_accepted_latent += accepted_latent
         self.n_accepted_param += accepted_param
         return
@@ -293,4 +254,23 @@ class MCM
             self.edge_freq_matrix[-1, -1] -= 1
             self.edge_freq_matrix[-1, -1] += n_pair
         return
+
+    def check_start_params(self, start_params, params_swap):
+        # check if the parameters are valid
+        assert 'alpha' in start_params
+        assert 'beta' in start_params
+        assert 'gamma' in start_params
+
+        # check if the swap proposal parameters are valid
+        assert 'alpha' in params_swap
+        assert 'beta' in params_swap
+        assert 'gamma' in params_swap
+
+        # check if the swap proposal parameters are valid
+        if params_swap['alpha'] != start_params['alpha']:
+            raise ValueError("The alpha value of the swap proposal parameters is different from the starting parameters")
+        if params_swap['beta'] != start_params['beta']:
+            raise ValueError("The beta value of the swap proposal parameters is different from the starting parameters")
+        if params_swap['gamma'] != start_params['gamma']:
+            raise ValueError("The gamma value of the swap proposal parameters is different from the starting parameters")
    

@@ -4,6 +4,7 @@ from scipy.special import logsumexp, expm1
 
 class LatentState:
     def __init__(self, n, m, alpha, beta, gamma, cost):
+        """ algorithm is initialized with no assignments, only unassigned points """
         self.n = n
         self.m = m
         self.alpha = alpha
@@ -11,8 +12,9 @@ class LatentState:
         self.gamma = gamma
         self.cost = cost
         self.states = {}
+        self.initialize_states()
 
-    def initial_state(self):
+    def initialize_states(self):
         for i in range(self.n):
             self.add_entry((i, self.m), 1)
         for j in range(self.m):
@@ -55,7 +57,7 @@ class LatentState:
 
     def add_entry(self, key, flow):
         i, j = key
-        state_type = state_type or self.state_type(key)
+        state_type = self.state_type(key)
         self.states[key] = {
             "flow": flow,
             "type": state_type,
@@ -184,11 +186,11 @@ class LatentState:
         """Sample a pair of keys to swap."""
         keys = list(self.states.keys())
         log_probs = np.array([self.states[key]["log_prob_swap_total"] for key in keys])
-        index1 = self.Gumel_Max(log_probs)
+        index1 = self.gumel_max(log_probs)
         key1 = keys[index1]
     
         log_probs = [-self.swap_cost(*key1, *key) for key in keys]
-        index2 = self.Gumel_Max(log_probs)
+        index2 = self.gumel_max(log_probs)
         key2 = keys[index2]
     
         return key1, key2

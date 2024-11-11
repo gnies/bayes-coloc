@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from collections import defaultdict
+from scipy.special import logsumexp, expm1 
 
 class LatentState:
     def __init__(self, n, m, alpha, beta, gamma, cost):
@@ -10,227 +10,225 @@ class LatentState:
         self.beta = beta
         self.gamma = gamma
         self.cost = cost
-
-        self.assigned = {}
-        self.unassigned_first_set = {}
-        self.unassigned_second_set = {}
-        self.bin_bin = {}
+        self.states = {}
 
     def initial_state(self):
-        """Initialize the state with all points unassigned."""
         for i in range(self.n):
             self.add_entry((i, self.m), 1)
-
         for j in range(self.m):
             self.add_entry((self.n, j), 1)
 
-    def copy(self):
-        state_copy = LatentState(self.n, self.m, self.alpha, self.beta, self.gamma, self.cost)
-        state_copy.assigned = self.assigned.copy()
-        state_copy.unassigned_first_set = self.unassigned_first_set.copy()
-        state_copy.unassigned_second_set = self.unassigned_second_set.copy()
-        state_copy.bin_bin = self.bin_bin.copy()
-        return state_copy
-    
     def log_sum_exp(self, values):
-        """Calculate log-sum-exp for numerical stability."""
-        max_val = max(values)
-        return max_val + math.log(sum(math.exp(val - max_val) for val in values))
+        if len(values) == 0:
+            return float('-inf')
+        else:
+            return logsumexp(values)
+
+    def log_diff_exp(self, a, b):
+        if (a - b) < np.log(0.5):
+            return a + np.log1p(-np.exp(b - a))
+        else:
+            return a + math.log(-expm1(b - a))
 
     def swap_cost(self, i, j, i_prime, j_prime):
-        """Calculate swap cost based on given conditions."""
         if i != i_prime and j != j_prime:
             res = (self.cost[i, j_prime] + self.cost[i_prime, j] -
                    self.cost[i, j] - self.cost[i_prime, j_prime])
         else:
-            res = float('inf')
+            return float('inf')
 
-        # Determine intensity cost difference
-        intensity_cost_diff = np.log(self.gamma) - np.log(self.alpha) - np.log(self.beta)
-        
-        # Adjust swap cost for specific match changes
-        if (i, j) in self.assigned and (i_prime, j_prime) in self.bin_bin:
+        intensity_cost_diff = math.log(self.gamma) - math.log(self.alpha) - math.log(self.beta)
+        if (i, j) in self.states and self.states[(i, j)]["type"] == "assigned" and \
+           (i_prime, j_prime) in self.states and self.states[(i_prime, j_prime)]["type"] == "bin_bin":
             res += intensity_cost_diff
-        elif (i, j) in self.bin_bin and (i_prime, j_prime) in self.assigned:
+        elif (i, j) in self.states and self.states[(i, j)]["type"] == "bin_bin" and \
+             (i_prime, j_prime) in self.states and self.states[(i_prime, j_prime)]["type"] == "assigned":
             res += intensity_cost_diff
-
-        # Adjust cost if creating a match
-        intensity_cost_diff = -np.log(self.gamma) + np.log(self.alpha) + np.log(self.beta)
-        if (i, j) in self.unassigned_first_set and (i_prime, j_prime) in self.unassigned_second_set:
-            res -= intensity_cost_diff
-        elif (i, j) in self.unassigned_second_set and (i_prime, j_prime) in self.unassigned_first_set:
-            res -= intensity_cost_diff
+        else:
+            intensity_cost_diff = -math.log(self.gamma) + math.log(self.alpha) + math.log(self.beta)
+            if ((i, j) in self.states and self.states[(i, j)]["type"] == "unassigned_first_set" and
+                (i_prime, j_prime) in self.states and self.states[(i_prime, j_prime)]["type"] == "unassigned_second_set") or \
+               ((i, j) in self.states and self.states[(i, j)]["type"] == "unassigned_second_set" and
+                (i_prime, j_prime) in self.states and self.states[(i_prime, j_prime)]["type"] == "unassigned_first_set"):
+                res -= intensity_cost_diff
         return res
 
     def add_entry(self, key, flow):
         i, j = key
-        if i < self.n and j < self.m:
-            target_dict = self.assigned
-            swap_field = 'log_prob_swap_with_assigned'
-        elif i < self.n and j == self.m:
-            target_dict = self.unassigned_first_set
-            swap_field = 'log_prob_swap_with_unassigned_first_set'
-        elif i == self.n and j < self.m:
-            target_dict = self.unassigned_second_set
-            swap_field = 'log_prob_swap_with_unassigned_second_set'
-        else:
-            target_dict = self.bin_bin
-            swap_field = 'log_prob_swap_with_bin_bin'
-        
-        log_probs = {
-            "log_prob_swap_with_assigned": -float('inf') if not self.assigned else self.log_sum_exp(
-                [-self.swap_cost(i, j, i_, j_) for i_, j_ in self.assigned.keys()]
-            ),
-            "log_prob_swap_with_unassigned_first_set": -float('inf') if not self.unassigned_first_set else self.log_sum_exp(
-                [-self.swap_cost(i, j, i_, j_) for i_, j_ in self.unassigned_first_set.keys()]
-            ),
-            "log_prob_swap_with_unassigned_second_set": -float('inf') if not self.unassigned_second_set else self.log_sum_exp(
-                [-self.swap_cost(i, j, i_, j_) for i_, j_ in self.unassigned_second_set.keys()]
-            ),
-            "log_prob_swap_with_bin_bin": -float('inf') if not self.bin_bin else self.log_sum_exp(
-                [-self.swap_cost(i, j, i_, j_) for i_, j_ in self.bin_bin.keys()]
-            )
-        }
-        
-        target_dict[key] = {
+        state_type = state_type or self.state_type(key)
+        self.states[key] = {
             "flow": flow,
-            **log_probs
+            "type": state_type,
+            "log_prob_swap_with_assigned": self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), state in self.states.items() if state["type"] == "assigned"]),
+            "log_prob_swap_with_unassigned_first_set": self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), state in self.states.items() if state["type"] == "unassigned_first_set"]),
+            "log_prob_swap_with_unassigned_second_set": self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), state in self.states.items() if state["type"] == "unassigned_second_set"]),
+            "log_prob_swap_with_bin_bin": self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), state in self.states.items() if state["type"] == "bin_bin"])
         }
-        self.update_log_probs_on_add(key, swap_field)
-
-    def update_log_probs_on_add(self, key, swap_field):
-        i, j = key
-        for dct in [self.assigned, self.unassigned_first_set, self.unassigned_second_set, self.bin_bin]:
-            for (i_, j_) in dct.keys():
-                if i != i_ and j != j_:
-                    dct[(i_, j_)][swap_field] = self.log_sum_exp([
-                        dct[(i_, j_)][swap_field],
-                        -self.swap_cost(i_, j_, i, j)
-                    ])
+        self.states[key]["log_prob_swap_total"] = self.log_sum_exp([
+            self.states[key]["log_prob_swap_with_assigned"],
+            self.states[key]["log_prob_swap_with_unassigned_first_set"],
+            self.states[key]["log_prob_swap_with_unassigned_second_set"],
+            self.states[key]["log_prob_swap_with_bin_bin"]
+        ])
+        self.update_log_probs_on_add(key)
 
     def remove_entry(self, key):
+        if key in self.states:
+            del self.states[key]
+            self.update_log_probs_on_remove(key)
+
+    def update_log_probs_on_add(self, key):
+        i, j = key
+        for (i_, j_), state in self.states.items():
+            if i != i_ and j != j_:
+                state_type = self.states[key]["type"]
+                log_prob_key = f"log_prob_swap_with_{state_type}"
+                self.states[(i_, j_)][log_prob_key] = np.logaddexp(
+                    self.states[(i_, j_)][log_prob_key],
+                    -self.swap_cost(i_, j_, i, j)
+                )
+                self.states[(i_, j_)]["log_prob_swap_total"] = self.log_sum_exp([
+                    self.states[(i_, j_)]["log_prob_swap_with_assigned"],
+                    self.states[(i_, j_)]["log_prob_swap_with_unassigned_first_set"],
+                    self.states[(i_, j_)]["log_prob_swap_with_unassigned_second_set"],
+                    self.states[(i_, j_)]["log_prob_swap_with_bin_bin"]
+                ])
+
+    def update_log_probs_on_remove(self, key):
+        i, j = key
+        for (i_, j_), state in self.states.items():
+            if i != i_ and j != j_:
+                state_type = self.states[key]["type"]
+                log_prob_key = f"log_prob_swap_with_{state_type}"
+                log_prob = self.states[(i_, j_)][log_prob_key]
+                self.states[(i_, j_)][log_prob_key] = self.log_diff_exp(
+                    log_prob,
+                    -self.swap_cost(i_, j_, i, j)
+                )
+                self.states[(i_, j_)]["log_prob_swap_total"] = self.log_sum_exp([
+                    self.states[(i_, j_)]["log_prob_swap_with_assigned"],
+                    self.states[(i_, j_)]["log_prob_swap_with_unassigned_first_set"],
+                    self.states[(i_, j_)]["log_prob_swap_with_unassigned_second_set"],
+                    self.states[(i_, j_)]["log_prob_swap_with_bin_bin"]
+                ])
+
+    def update_intensities(self, alpha, beta, gamma):
+        """Update the intensities alpha, beta, and gamma, and adjust relevant log probabilities."""
+        a_old, b_old, c_old = self.alpha, self.beta, self.gamma
+        self.alpha, self.beta, self.gamma = alpha, beta, gamma
+    
+        # Compute the change in log scale
+        change = math.log(alpha) + math.log(beta) - math.log(gamma) - math.log(a_old) - math.log(b_old) + math.log(c_old)
+    
+        # Update the log probabilities for each state
+        for key, value in self.states.items():
+            value["log_prob_swap_with_assigned"] += change
+            value["log_prob_swap_with_bin_bin"] += change
+            value["log_prob_swap_with_unassigned_first_set"] -= change
+            value["log_prob_swap_with_unassigned_second_set"] -= change
+        return 
+
+    def state_type(self, key):
         i, j = key
         if i < self.n and j < self.m:
-            target_dict = self.assigned
-            swap_field = 'log_prob_swap_with_assigned'
-        elif i < self.n and j == self.m:
-            target_dict = self.unassigned_first_set
-            swap_field = 'log_prob_swap_with_unassigned_first_set'
+            return "assigned"
         elif i == self.n and j < self.m:
-            target_dict = self.unassigned_second_set
-            swap_field = 'log_prob_swap_with_unassigned_second_set'
+            return "unassigned_second_set"
+        elif i < self.n and j == self.m:
+            return "unassigned_first_set"
         else:
-            target_dict = self.bin_bin
-            swap_field = 'log_prob_swap_with_bin_bin'
-        
-        if key in target_dict:
-            del target_dict[key]
-            self.update_log_probs_on_remove(key, swap_field)
-
-    def update_log_probs_on_remove(self, key, swap_field):
-        i, j = key
-        for dct in [self.assigned, self.unassigned_first_set, self.unassigned_second_set, self.bin_bin]:
-            for (i_, j_) in dct.keys():
-                if i != i_ and j != j_:
-                    dct[(i_, j_)][swap_field] += math.log(
-                        1 - math.exp(
-                            -self.swap_cost(i_, j_, i, j) - dct[(i_, j_)][swap_field]
-                        )
-                    )
+            return "bin_bin"
 
     def set_key_flow(self, key, flow):
-        i, j = key
         if flow == 0:
             self.remove_entry(key)
         else:
             self.add_entry(key, flow)
 
     def get_key_flow(self, key):
-        i, j = key
-        if i < self.n and j < self.m:
-            target_dict = self.assigned
-        elif i < self.n and j == self.m:
-            target_dict = self.unassigned_first_set
-        elif i == self.n and j < self.m:
-            target_dict = self.unassigned_second_set
-        else:
-            target_dict = self.bin_bin
-        if key not in target_dict:
+        if key not in self.states:
             self.add_entry(key, 0)
+        return self.states[key]["flow"]
 
-    def do_swap(self, key1, key2): 
-        i1, j1 = key1
-        i2, j2 = key2
-
+    def do_swap(self, key1, key2):
         m1 = self.get_key_flow(key1)
         m2 = self.get_key_flow(key2)
 
-        self.set_key_flow(key1, m1-1)
-        self.set_key_flow(key2, m2-1)
+        self.set_key_flow(key1, m1 - 1)
+        self.set_key_flow(key2, m2 - 1)
 
-        new_key1 = (i1, j2)
-        new_key2 = (i2, j1)
+        new_key1 = (key1[0], key2[1])
+        new_key2 = (key2[0], key1[1])
 
         n1 = self.get_key_flow(new_key1)
         n2 = self.get_key_flow(new_key2)
 
-        self.set_key_flow(new_key1, n1+1)
-        self.set_key_flow(new_key2, n2+1)
-
-    def total_cost(self):
-        return sum(
-            flow * dct[key]['cost']
-            for dct in [self.assigned, self.unassigned_first_set, self.unassigned_second_set, self.bin_bin]
-            for key, flow in dct.items()
-        )
-
-    def n_pairs(self):
-        return len(self.assigned)
-
-    def update_intensities(self, alpha, beta, gamma):
-        a_old, b_old, c_old = self.alpha, self.beta, self.gamma
-        self.alpha, self.beta, self.gamma = alpha, beta, gamma
-
-        change = np.log(alpha) + np.log(beta) - np.log(gamma) - np.log(a_old) - np.log(b_old) + np.log(c_old)
-        for key in self.assigned.keys():
-            self.assigned[key]["log_prob_swap_with_assigned"] += change
-        for key in self.bin_bin.keys():
-            self.bin_bin[key]["log_prob_swap_with_bin_bin"] += change
-        for key in self.unassigned_first_set.keys():
-            self.unassigned_first_set[key]["log_prob_swap_with_unassigned_second_set"] -= change
-        for key in self.unassigned_second_set.keys():
-            self.unassigned_second_set[key]["log_prob_swap_with_unassigned_first_set"] -= change
-
-    def sample_swap(self):
-        keys = list(self.assigned.keys()) + list(self.bin_bin.keys()) + list(self.unassigned_first_set.keys()) + list(self.unassigned_second_set.keys())
-        log_probs = [self.log_sum_exp([dct[key][field] for field in ["log_prob_swap_with_assigned", "log_prob_swap_with_bin_bin", 
-                    "log_prob_swap_with_unassigned_first_set", "log_prob_swap_with_unassigned_second_set"]])
-                     for dct in [self.assigned, self.bin_bin, self.unassigned_first_set, self.unassigned_second_set]
-                     for key in dct.keys()]
-
-        probs = np.exp(log_probs - np.max(log_probs))
-        probs /= np.sum(probs)
-        key0 = np.random.choice(keys, p=probs)
-
-        log_probs = [self.swap_cost(*key0, *key) for key in keys]
-        probs = np.exp(log_probs - np.max(log_probs))
-        probs /= np.sum(probs)
-        key1 = np.random.choice(keys, p=probs)
-
-        return key0, key1
-
-    def n_pairs(self):
-        return len(self.assigned)
+        self.set_key_flow(new_key1, n1 + 1)
+        self.set_key_flow(new_key2, n2 + 1)
 
     def return_numpy_path(self):
-        path = np.empty((self.n + self.m, 2))
-        k = 0
-        for dct in [self.assigned, self.bin_bin, self.unassigned_first_set, self.unassigned_second_set]:
-            for key in dct.keys():
-                i, j = key
-                flow = dct[key]["flow"]
-                for _ in range(flow):
-                    path[k, :] = (i, j)
-                    k += 1
-        return path
+        path = np.empty((len(self.states), 2), dtype=int)
+        for idx, (key, value) in enumerate(self.states.items()):
+            path[idx, :] = key
 
+    def gumel_max(self, log_probs):
+        """ Use the Gumbel-Max trick to sample an index directly from the unscaled log probabilities."""
+        log_probs = np.asarray(log_probs)
+        real_log_probs_indices = np.where(log_probs > -np.inf)[0]
+        real_log_probs = log_probs[real_log_probs_indices]
+        gumbels = np.random.gumbel(size=len(real_log_probs))
+        index = real_log_probs_indices[np.argmax(real_log_probs + gumbels)]
+        return index
+    
+    def sample_swap(self):
+        """Sample a pair of keys to swap."""
+        keys = list(self.states.keys())
+        log_probs = np.array([self.states[key]["log_prob_swap_total"] for key in keys])
+        index1 = self.Gumel_Max(log_probs)
+        key1 = keys[index1]
+    
+        log_probs = [-self.swap_cost(*key1, *key) for key in keys]
+        index2 = self.Gumel_Max(log_probs)
+        key2 = keys[index2]
+    
+        return key1, key2
+    
+    def log_prob_swap(self, key1, key2):
+        """Calculate the probability of swapping key1 with key2."""
+        keys = list(self.states.keys())
+        log_probs = [self.states[key1]["log_prob_swap_total"] + self.swap_cost(*key1, *key) for key in keys]
+        l1 = log_probs[keys.index(key2)] - self.log_sum_exp(log_probs)
+    
+        log_probs = [self.states[key2]["log_prob_swap_total"] + self.swap_cost(*key2, *key) for key in keys]
+        l2 = log_probs[keys.index(key2)] - self.log_sum_exp(log_probs)
+    
+        return l1 + l2
+
+    def log_prob_reverse_swap(self, key1, key2):
+        """Calculate the probability of reversing the swap of key1 with key2."""
+        (i, j), (i_prime, j_prime) = key1, key2
+        key1_new = (i, j_prime)
+        key2_new = (i_prime, j)
+
+        # to avoid numerical instability, we make a copy of the current state
+        copy = self.states.copy()
+        self.do_swap(key1, key2)
+        log_prob_swap = self.log_prob_swap(key1_new, key2_new)
+
+        # undo swap
+        # self.do_swap(key1_new, key2_new)
+        self.states = copy
+
+        return log_prob_swap
+
+
+    def numpy_path(self):
+        """Return a numpy array representing the assignments."""
+        path = np.empty((len(self.states), 2), dtype=int)
+        for idx, (key, value) in enumerate(self.states.items()):
+            i, j = key
+            flow = value["flow"]
+            for _ in range(flow):
+                path[idx, :] = (i, j)
+        return path
+    

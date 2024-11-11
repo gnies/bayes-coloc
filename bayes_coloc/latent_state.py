@@ -27,10 +27,18 @@ class LatentState:
             return logsumexp(values)
 
     def log_diff_exp(self, a, b):
-        if (a - b) < np.log(0.5):
-            return a + np.log1p(-np.exp(b - a))
+        """ Compute log(exp(a) - exp(b)) in a numerically stable way.
+        This uses the identity log(exp(a) - exp(b)) = a + log(1 - exp(-|a - b|)) 
+        """
+        return a + self.log1mexp(np.abs(a - b))
+
+    def log1mexp(self, x):
+        """ Compute log(1 - exp(-|x|)) in a numerically stable way.
+        This is based on the paper: "Accurately Computing log(1 - exp(-|a|))". Assesed by the Rmpfr package" by Martin Maechler, ETH Zurich. """
+        if x < np.log(2):
+            return np.log(-expm1(-x))
         else:
-            return a + math.log(-expm1(b - a))
+            return np.log1p(-np.exp(-x))
 
     def swap_cost(self, i, j, i_prime, j_prime):
         if i != i_prime and j != j_prime:
@@ -100,7 +108,7 @@ class LatentState:
         i, j = key
         for (i_, j_), state in self.states.items():
             if i != i_ and j != j_:
-                state_type = self.states[key]["type"]
+                state_type = self.state_type(key)  
                 log_prob_key = f"log_prob_swap_with_{state_type}"
                 log_prob = self.states[(i_, j_)][log_prob_key]
                 self.states[(i_, j_)][log_prob_key] = self.log_diff_exp(

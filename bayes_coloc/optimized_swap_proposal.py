@@ -188,6 +188,11 @@ class MCMC:
         i = np.array(i)
         j = np.array(j)
         alpha, beta, gamma = param['alpha'], param['beta'], param['gamma']
+            
+        # if the parameters have probability zero, then the cost is -inf
+        # this also avoids evaluating the likelihood on invalid parameters
+        if self.param_log_prior(param) == -np.inf:
+            return np.inf
 
         i = np.array(i)
         j = np.array(j)

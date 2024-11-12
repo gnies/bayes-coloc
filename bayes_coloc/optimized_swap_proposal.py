@@ -148,7 +148,7 @@ class MCMC:
         log_acceptance_ratio = - self.cost(i0, j1, current_param) - self.cost(i1, j0, current_param) + self.cost(i0, j0, current_param) + self.cost(i1, j1, current_param)
 
         # balance ratio
-        log_acceptance_ratio +=  reverse_swap_log_prob - swap_log_prob
+        log_acceptance_ratio +=  +reverse_swap_log_prob - swap_log_prob
         u = ln(np.random.random())
         accepted = u < log_acceptance_ratio
         

@@ -211,7 +211,7 @@ class LatentState:
         """Calculate the probability of swapping key1 with key2."""
         keys = list(self.state.keys())
         log_probs = np.array([self.state[key]["log_prob_swap_total"] for key in keys])
-        l1 = log_probs[keys.index(key1)] 
+        l1 = log_probs[keys.index(key1)] - self.log_sum_exp(log_probs)
     
         log_probs = [-self.swap_cost(*key1, *key) for key in keys]
         l2 = log_probs[keys.index(key2)] - self.log_sum_exp(log_probs)
@@ -225,13 +225,11 @@ class LatentState:
         key2_new = (i_prime, j)
 
         # to avoid numerical instability, we make a copy of the current state
-        copy = self.state.copy()
         self.do_swap(key1, key2)
         log_prob_swap = self.log_prob_swap(key1_new, key2_new)
 
         # undo swap
-        # self.do_swap(key1_new, key2_new)
-        self.state = copy
+        self.do_swap(key1_new, key2_new)
 
         return log_prob_swap
 

@@ -39,7 +39,7 @@ class MCMC:
         self.y = y
         self.nx = len(x)
         self.ny = len(y)
-        self.param_proposal = param_proposal
+        self.param_proposal = params_proposal
 
         self.l_xy = l_xy
         self.l_x = l_x
@@ -57,7 +57,7 @@ class MCMC:
         self.check_start_params(start_params, params_swap)
 
         # here we store the trajectory of the parameters
-        self.param_trajectory = [start_param]
+        self.param_trajectory = [start_params]
 
         # we track how often a move is accepted in the latent space and in the parameter space
         self.n_accepted_latent = 0
@@ -85,11 +85,11 @@ class MCMC:
             proposal_cost[self.nx, j] = -self.l_y_index(j, params_swap)
 
         alpha, beta, gamma = start_params['alpha'], start_params['beta'], start_params['gamma']
-        self.latent_state = LatentState(self.nx, self.ny, n, m, alpha, beta, gamma , proposal_cost)
+        self.latent_state = LatentState(self.nx, self.ny, alpha, beta, gamma , proposal_cost)
 
         #### initialize the trajectory
         path = self.latent_state.numpy_path()
-        self.save_to_trajectory(start_param, path, accepted_latent=False, accepted_param=False,
+        self.save_to_trajectory(start_params, path, accepted_latent=False, accepted_param=False,
                 save_latent=self.save_latent_trajectory)
         
     def run(self, n_samples=10000, burn_in=1000):

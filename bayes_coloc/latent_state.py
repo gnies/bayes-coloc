@@ -2,6 +2,13 @@ import math
 import numpy as np
 from scipy.special import logsumexp, expm1 
 
+# This function is used to avoid warnings
+def ln(x):
+    if x == 0:
+        return float('-inf')
+    else:
+        return np.log(x)
+
 class LatentState:
     def __init__(self, n, m, alpha, beta, gamma, cost):
         """ algorithm is initialized with no assignments, only unassigned points """
@@ -11,7 +18,7 @@ class LatentState:
         self.beta = beta
         self.gamma = gamma
         self.cost = cost
-        self.states = {}
+        self.state = {}
         self.initialize_states()
 
     def initialize_states(self):
@@ -35,91 +42,89 @@ class LatentState:
     def log1mexp(self, x):
         """ Compute log(1 - exp(-|x|)) in a numerically stable way.
         This is based on the paper: "Accurately Computing log(1 - exp(-|a|))". Assesed by the Rmpfr package" by Martin Maechler, ETH Zurich. """
-        if x < np.log(2):
-            return np.log(-expm1(-x))
+        if x == 0: # this just serves to suppresses warnings from the log function
+            return float('-inf')
+        elif x < np.log(2):
+            return np.log(-np.expm1(-np.abs(x)))
         else:
-            return np.log1p(-np.exp(-x))
+            return np.log1p(-np.exp(-np.abs(x)))
 
     def swap_cost(self, i, j, i_prime, j_prime):
-        if i != i_prime and j != j_prime:
+        if i == i_prime or j == j_prime:
+            return float('inf')
+        else:
             res = (self.cost[i, j_prime] + self.cost[i_prime, j] -
                    self.cost[i, j] - self.cost[i_prime, j_prime])
-        else:
-            return float('inf')
 
-        intensity_cost_diff = math.log(self.gamma) - math.log(self.alpha) - math.log(self.beta)
-        if (i, j) in self.states and self.states[(i, j)]["type"] == "assigned" and \
-           (i_prime, j_prime) in self.states and self.states[(i_prime, j_prime)]["type"] == "bin_bin":
+        intensity_cost_diff = ln(self.gamma) - ln(self.alpha) - ln(self.beta)
+        if self.type(i, j) == "assigned" and self.type(i_prime, j_prime) == "bin_bin":
             res += intensity_cost_diff
-        elif (i, j) in self.states and self.states[(i, j)]["type"] == "bin_bin" and \
-             (i_prime, j_prime) in self.states and self.states[(i_prime, j_prime)]["type"] == "assigned":
+        elif self.type(i, j) == "bin_bin" and self.type(i_prime, j_prime) == "assigned":
             res += intensity_cost_diff
-        else:
-            intensity_cost_diff = -math.log(self.gamma) + math.log(self.alpha) + math.log(self.beta)
-            if ((i, j) in self.states and self.states[(i, j)]["type"] == "unassigned_first_set" and
-                (i_prime, j_prime) in self.states and self.states[(i_prime, j_prime)]["type"] == "unassigned_second_set") or \
-               ((i, j) in self.states and self.states[(i, j)]["type"] == "unassigned_second_set" and
-                (i_prime, j_prime) in self.states and self.states[(i_prime, j_prime)]["type"] == "unassigned_first_set"):
-                res -= intensity_cost_diff
+
+        elif self.type(i, j) == "unassigned_first_set" and self.type(i_prime, j_prime) == "unassigned_second_set":
+            res -= intensity_cost_diff
+        elif self.type(i, j) == "unassigned_second_set" and self.type(i_prime, j_prime) == "unassigned_first_set":
+            res -= intensity_cost_diff
         return res
 
     def add_entry(self, key, flow):
         i, j = key
-        state_type = self.state_type(key)
-        self.states[key] = {
+        state_type = self.type(i, j)
+        self.state[key] = {
             "flow": flow,
             "type": state_type,
-            "log_prob_swap_with_assigned": self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), state in self.states.items() if state["type"] == "assigned"]),
-            "log_prob_swap_with_unassigned_first_set": self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), state in self.states.items() if state["type"] == "unassigned_first_set"]),
-            "log_prob_swap_with_unassigned_second_set": self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), state in self.states.items() if state["type"] == "unassigned_second_set"]),
-            "log_prob_swap_with_bin_bin": self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), state in self.states.items() if state["type"] == "bin_bin"])
+            "log_prob_swap_with_assigned":              self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), di in self.state.items() if di["type"] == "assigned"]),
+            "log_prob_swap_with_unassigned_first_set":  self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), di in self.state.items() if di["type"] == "unassigned_first_set"]),
+            "log_prob_swap_with_unassigned_second_set": self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), di in self.state.items() if di["type"] == "unassigned_second_set"]),
+            "log_prob_swap_with_bin_bin":               self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), di in self.state.items() if di["type"] == "bin_bin"])
         }
-        self.states[key]["log_prob_swap_total"] = self.log_sum_exp([
-            self.states[key]["log_prob_swap_with_assigned"],
-            self.states[key]["log_prob_swap_with_unassigned_first_set"],
-            self.states[key]["log_prob_swap_with_unassigned_second_set"],
-            self.states[key]["log_prob_swap_with_bin_bin"]
+        self.state[key]["log_prob_swap_total"] = self.log_sum_exp([
+            self.state[key]["log_prob_swap_with_assigned"],
+            self.state[key]["log_prob_swap_with_unassigned_first_set"],
+            self.state[key]["log_prob_swap_with_unassigned_second_set"],
+            self.state[key]["log_prob_swap_with_bin_bin"]
         ])
         self.update_log_probs_on_add(key)
 
     def remove_entry(self, key):
-        if key in self.states:
-            del self.states[key]
+        if key in self.state:
+            del self.state[key]
             self.update_log_probs_on_remove(key)
 
     def update_log_probs_on_add(self, key):
         i, j = key
-        for (i_, j_), state in self.states.items():
+        for (i_, j_) in self.state.keys():
             if i != i_ and j != j_:
-                state_type = self.states[key]["type"]
+                state_type = self.state[key]["type"]
                 log_prob_key = f"log_prob_swap_with_{state_type}"
-                self.states[(i_, j_)][log_prob_key] = np.logaddexp(
-                    self.states[(i_, j_)][log_prob_key],
+                self.state[(i_, j_)][log_prob_key] = np.logaddexp(
+                    self.state[(i_, j_)][log_prob_key],
                     -self.swap_cost(i_, j_, i, j)
                 )
-                self.states[(i_, j_)]["log_prob_swap_total"] = self.log_sum_exp([
-                    self.states[(i_, j_)]["log_prob_swap_with_assigned"],
-                    self.states[(i_, j_)]["log_prob_swap_with_unassigned_first_set"],
-                    self.states[(i_, j_)]["log_prob_swap_with_unassigned_second_set"],
-                    self.states[(i_, j_)]["log_prob_swap_with_bin_bin"]
+                self.state[(i_, j_)]["log_prob_swap_total"] = self.log_sum_exp([
+                    self.state[(i_, j_)]["log_prob_swap_with_assigned"],
+                    self.state[(i_, j_)]["log_prob_swap_with_unassigned_first_set"],
+                    self.state[(i_, j_)]["log_prob_swap_with_unassigned_second_set"],
+                    self.state[(i_, j_)]["log_prob_swap_with_bin_bin"]
                 ])
 
     def update_log_probs_on_remove(self, key):
         i, j = key
-        for (i_, j_), state in self.states.items():
+        for (i_, j_), state in self.state.items():
             if i != i_ and j != j_:
-                state_type = self.state_type(key)  
+                state_type = self.type(i, j)  
                 log_prob_key = f"log_prob_swap_with_{state_type}"
-                log_prob = self.states[(i_, j_)][log_prob_key]
-                self.states[(i_, j_)][log_prob_key] = self.log_diff_exp(
+                log_prob = self.state[(i_, j_)][log_prob_key]
+                self.state[(i_, j_)][log_prob_key] = self.log_diff_exp(
                     log_prob,
                     -self.swap_cost(i_, j_, i, j)
                 )
-                self.states[(i_, j_)]["log_prob_swap_total"] = self.log_sum_exp([
-                    self.states[(i_, j_)]["log_prob_swap_with_assigned"],
-                    self.states[(i_, j_)]["log_prob_swap_with_unassigned_first_set"],
-                    self.states[(i_, j_)]["log_prob_swap_with_unassigned_second_set"],
-                    self.states[(i_, j_)]["log_prob_swap_with_bin_bin"]
+                self.state[(i_, j_)]["log_prob_swap_total"] = self.log_sum_exp([
+                    self.state[(i_, j_)]["log_prob_swap_with_assigned"],
+                    self.state[(i_, j_)]["log_prob_swap_with_unassigned_first_set"],
+                    self.state[(i_, j_)]["log_prob_swap_with_unassigned_second_set"],
+                    self.state[(i_, j_)]["log_prob_swap_with_bin_bin"]
                 ])
 
     def update_intensities(self, alpha, beta, gamma):
@@ -128,18 +133,17 @@ class LatentState:
         self.alpha, self.beta, self.gamma = alpha, beta, gamma
     
         # Compute the change in log scale
-        change = math.log(alpha) + math.log(beta) - math.log(gamma) - math.log(a_old) - math.log(b_old) + math.log(c_old)
+        change = ln(alpha) + ln(beta) - ln(gamma) - ln(a_old) - ln(b_old) + ln(c_old)
     
         # Update the log probabilities for each state
-        for key, value in self.states.items():
+        for key, value in self.state.items():
             value["log_prob_swap_with_assigned"] += change
             value["log_prob_swap_with_bin_bin"] += change
             value["log_prob_swap_with_unassigned_first_set"] -= change
             value["log_prob_swap_with_unassigned_second_set"] -= change
         return 
 
-    def state_type(self, key):
-        i, j = key
+    def type(self, i, j):
         if i < self.n and j < self.m:
             return "assigned"
         elif i == self.n and j < self.m:
@@ -156,9 +160,9 @@ class LatentState:
             self.add_entry(key, flow)
 
     def get_key_flow(self, key):
-        if key not in self.states:
+        if key not in self.state:
             self.add_entry(key, 0)
-        return self.states[key]["flow"]
+        return self.state[key]["flow"]
 
     def do_swap(self, key1, key2):
         m1 = self.get_key_flow(key1)
@@ -177,8 +181,8 @@ class LatentState:
         self.set_key_flow(new_key2, n2 + 1)
 
     def return_numpy_path(self):
-        path = np.empty((len(self.states), 2), dtype=int)
-        for idx, (key, value) in enumerate(self.states.items()):
+        path = np.empty((len(self.state), 2), dtype=int)
+        for idx, (key, value) in enumerate(self.state.items()):
             path[idx, :] = key
 
     def gumel_max(self, log_probs):
@@ -192,8 +196,8 @@ class LatentState:
     
     def sample_swap(self):
         """Sample a pair of keys to swap."""
-        keys = list(self.states.keys())
-        log_probs = np.array([self.states[key]["log_prob_swap_total"] for key in keys])
+        keys = list(self.state.keys())
+        log_probs = np.array([self.state[key]["log_prob_swap_total"] for key in keys])
         index1 = self.gumel_max(log_probs)
         key1 = keys[index1]
     
@@ -205,11 +209,11 @@ class LatentState:
     
     def log_prob_swap(self, key1, key2):
         """Calculate the probability of swapping key1 with key2."""
-        keys = list(self.states.keys())
-        log_probs = [self.states[key1]["log_prob_swap_total"] + self.swap_cost(*key1, *key) for key in keys]
-        l1 = log_probs[keys.index(key2)] - self.log_sum_exp(log_probs)
+        keys = list(self.state.keys())
+        log_probs = np.array([self.state[key]["log_prob_swap_total"] for key in keys])
+        l1 = log_probs[keys.index(key1)] 
     
-        log_probs = [self.states[key2]["log_prob_swap_total"] + self.swap_cost(*key2, *key) for key in keys]
+        log_probs = [-self.swap_cost(*key1, *key) for key in keys]
         l2 = log_probs[keys.index(key2)] - self.log_sum_exp(log_probs)
     
         return l1 + l2
@@ -221,21 +225,21 @@ class LatentState:
         key2_new = (i_prime, j)
 
         # to avoid numerical instability, we make a copy of the current state
-        copy = self.states.copy()
+        copy = self.state.copy()
         self.do_swap(key1, key2)
         log_prob_swap = self.log_prob_swap(key1_new, key2_new)
 
         # undo swap
         # self.do_swap(key1_new, key2_new)
-        self.states = copy
+        self.state = copy
 
         return log_prob_swap
 
 
     def numpy_path(self):
         """Return a numpy array representing the assignments."""
-        path = np.empty((len(self.states), 2), dtype=int)
-        for idx, (key, value) in enumerate(self.states.items()):
+        path = np.empty((len(self.state), 2), dtype=int)
+        for idx, (key, value) in enumerate(self.state.items()):
             i, j = key
             flow = value["flow"]
             for _ in range(flow):

@@ -36,6 +36,7 @@ class LatentState:
         return log_prob_matrix
 
     def log_prob_marginal_slow(self):
+        """Compute the marginal log probabilities of each state in a slow way. This is used for testing purposes."""
         log_prob_matrix = self.compute_log_prob_matrix()
         l, _ = log_prob_matrix.shape
         res = np.empty(l)
@@ -44,11 +45,10 @@ class LatentState:
         return res
 
     def log_prob_marginal(self):
+        """Compute the marginal log probabilities of each state."""
         keys = list(self.state.keys())
         log_probs = np.array([self.state[key]["log_prob_swap_total"] for key in keys])
         return log_probs
-
-
 
     def log_sum_exp(self, values):
         if len(values) == 0:
@@ -216,9 +216,7 @@ class LatentState:
     def log_prob_swap(self, key1, key2):
         """Calculate the probability of swapping key1 with key2."""
         keys = list(self.state.keys())
-        ### MODIFIED
-        log_probs = np.array([self.state[key]["log_prob_swap_total"] for key in keys])
-        # log_probs = self.log_prob_marginal()
+        log_probs = self.log_prob_marginal()
 
         l1 = log_probs[keys.index(key1)] - self.log_sum_exp(log_probs)
     

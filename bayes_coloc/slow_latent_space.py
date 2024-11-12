@@ -1,6 +1,3 @@
-#### SLOW VERSION OF THE LATENT SPACE SAMPLER ####
-# This version is used for testing correctness of the fast version
-
 import math
 import numpy as np
 from scipy.special import logsumexp, expm1 
@@ -38,13 +35,19 @@ class LatentState:
                 log_prob_matrix[keys.index((i, j)), keys.index((i_, j_))] = -self.swap_cost(i, j, i_, j_)
         return log_prob_matrix
 
-    def log_prob_marginal(self):
+    def log_prob_marginal_slow(self):
         log_prob_matrix = self.compute_log_prob_matrix()
         l, _ = log_prob_matrix.shape
         res = np.empty(l)
         for i in range(l):
             res[i] = self.log_sum_exp(log_prob_matrix[i, :])
         return res
+
+    def log_prob_marginal(self):
+        keys = list(self.state.keys())
+        log_probs = np.array([self.state[key]["log_prob_swap_total"] for key in keys])
+        return log_probs
+
 
 
     def log_sum_exp(self, values):
@@ -177,7 +180,8 @@ class LatentState:
         if flow == 0:
             self.remove_entry(key)
         else:
-            self.add_entry(key, flow)
+            self.state[key]["flow"] = flow
+            
 
     def get_key_flow(self, key):
         if key not in self.state:
@@ -200,45 +204,21 @@ class LatentState:
         self.set_key_flow(new_key1, n1 + 1)
         self.set_key_flow(new_key2, n2 + 1)
 
+    def keys(self):
+        return list(self.state.keys())
+
     def return_numpy_path(self):
         path = np.empty((len(self.state), 2), dtype=int)
         for idx, (key, value) in enumerate(self.state.items()):
             path[idx, :] = key
 
-    def gumel_max(self, log_probs):
-        """ Use the Gumbel-Max trick to sample an index directly from the unscaled log probabilities."""
-        log_probs = np.asarray(log_probs)
-        real_log_probs_indices = np.where(log_probs > -np.inf)[0]
-        real_log_probs = log_probs[real_log_probs_indices]
-        gumbels = np.random.gumbel(size=len(real_log_probs))
-        index = real_log_probs_indices[np.argmax(real_log_probs + gumbels)]
-        return index
-    
-    def sample_swap(self):
-        """Sample a pair of keys to swap."""
-        keys = list(self.state.keys())
-        ### MODIFIED
-        # log_probs = np.array([self.state[key]["log_prob_swap_total"] for key in keys])
-        log_probs = self.log_prob_marginal()
-        index1 = self.gumel_max(log_probs)
-        key1 = keys[index1]
-    
-        log_probs = [-self.swap_cost(*key1, *key) for key in keys]
-        index2 = self.gumel_max(log_probs)
-        key2 = keys[index2]
-    
-        return key1, key2
     
     def log_prob_swap(self, key1, key2):
         """Calculate the probability of swapping key1 with key2."""
         keys = list(self.state.keys())
         ### MODIFIED
-        # log_probs = np.array([self.state[key]["log_prob_swap_total"] for key in keys])
-        log_probs = self.log_prob_marginal()
-        # log_probs_v2 = self.log_prob_marginal()
-        # print("diffs", log_probs- log_probs_v2)
-
-        # log_probs = log_probs_v2
+        log_probs = np.array([self.state[key]["log_prob_swap_total"] for key in keys])
+        # log_probs = self.log_prob_marginal()
 
         l1 = log_probs[keys.index(key1)] - self.log_sum_exp(log_probs)
     

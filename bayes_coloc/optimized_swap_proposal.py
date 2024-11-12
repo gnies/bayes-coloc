@@ -130,6 +130,20 @@ class MCMC:
         else:
             return self.MH_move_for_latent_variable()
 
+    def sample_swap(self):
+        """Sample a pair of keys to swap."""
+        keys = self.latent_state.keys()
+        log_probs = self.latent_state.log_prob_marginal()
+
+        index1 = gumel_max(log_probs)
+        key1 = keys[index1]
+    
+        log_probs = [-self.latent_state.swap_cost(*key1, *key) for key in keys]
+        index2 = gumel_max(log_probs)
+        key2 = keys[index2]
+    
+        return key1, key2
+
     def MH_move_for_latent_variable(self):
         """ Perform a single Metropolis-Hastings move"""
         ic(" ")
@@ -139,7 +153,7 @@ class MCMC:
         # get current parameter
         current_param = self.param_trajectory[-1]
         
-        k0, k1 = self.latent_state.sample_swap()
+        k0, k1 = self.sample_swap()
         swap_log_prob = self.latent_state.log_prob_swap(k0, k1)
         reverse_swap_log_prob = self.latent_state.log_prob_reverse_swap(k0, k1)
         
@@ -280,3 +294,11 @@ class MCMC:
         if params_swap['gamma'] != start_params['gamma']:
             raise ValueError("The gamma value of the swap proposal parameters is different from the starting parameters")
    
+def gumel_max(log_probs):
+    """ Use the Gumbel-Max trick to sample an index directly from the unscaled log probabilities."""
+    log_probs = np.asarray(log_probs)
+    real_log_probs_indices = np.where(log_probs > -np.inf)[0]
+    real_log_probs = log_probs[real_log_probs_indices]
+    gumbels = np.random.gumbel(size=len(real_log_probs))
+    index = real_log_probs_indices[np.argmax(real_log_probs + gumbels)]
+    return index

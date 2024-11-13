@@ -156,14 +156,23 @@ class LatentState:
         self.alpha, self.beta, self.gamma = alpha, beta, gamma
     
         # Compute the change in log scale
-        change = ln(alpha) + ln(beta) - ln(gamma) - ln(a_old) - ln(b_old) + ln(c_old)
+        change = (ln(alpha) + ln(beta) - ln(gamma)) 
+        change -= (ln(a_old) + ln(b_old) - ln(c_old))
     
         # Update the log probabilities for each state
         for key, value in self.state.items():
-            value["log_prob_swap_with_assigned"] += change
-            value["log_prob_swap_with_bin_bin"] += change
-            value["log_prob_swap_with_unassigned_first_set"] -= change
-            value["log_prob_swap_with_unassigned_second_set"] -= change
+            # get state type of key
+            i, j = key
+            state_type = self.type(i, j)
+            if state_type == "assigned":
+                value["log_prob_swap_with_bin_bin"] += change
+            elif state_type == "bin_bin":
+                value["log_prob_swap_with_assigned"] += change
+            elif state_type == "unassigned_first_set":
+                value["log_prob_swap_with_unassigned_second_set"] -= change
+            elif state_type == "unassigned_second_set":
+                value["log_prob_swap_with_unassigned_first_set"] -= change
+            value["log_prob_swap_total"] = self.log_sum_exp([value["log_prob_swap_with_assigned"], value["log_prob_swap_with_unassigned_first_set"], value["log_prob_swap_with_unassigned_second_set"], value["log_prob_swap_with_bin_bin"]])
         return 
 
     def type(self, i, j):

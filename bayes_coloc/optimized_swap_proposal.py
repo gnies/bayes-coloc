@@ -30,12 +30,6 @@ class MCMC:
         save_latent_trajectory: if True, save the latent trajectory
         """
 
-        # set verbosity
-        if not verbose:
-            ic.disable()
-        else:
-            ic.enable()
-        
         self.x = x
         self.y = y
         self.nx = len(x)
@@ -143,9 +137,6 @@ class MCMC:
 
     def MH_move_for_latent_variable(self):
         """ Perform a single Metropolis-Hastings move"""
-        ic(" ")
-        ic("new move begun")
-        ic(" ")
         
         # get current parameter
         current_param = self.param_trajectory[-1]

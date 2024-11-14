@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.special import logsumexp, expm1 
+from icecream import ic
 
+ic.disable()
 # This function is used to avoid warnings
 def ln(x):
     if x == 0:
@@ -66,13 +68,25 @@ class LatentState:
         
     def log_prob_marginal(self):
         """Compute the marginal log probabilities of each state."""
-        return self.graph["log_p_swap_total"]
+        log_probs = self.graph["log_p_swap_total"]
+        # only representative edges can be swapped
+        log_probs[~self.graph["edge_representative"]] = -np.inf
+        return log_probs
 
-    def all_edges_of_type(self, state_type):
-        """Return all representing edges of a given type."""
-        return self.graph[self.graph["edge_representative"] & (self.graph[state_type])]
+    def log_probs_swap_second_edge(self, k1):
+        i1, j1 = self.graph["ij"][k1]
+        log_probs_second_edge = []
+        for k in range(len(self.graph)):
+            i2, j2 = self.graph["ij"][k]
+            log_probs_second_edge.append(-self.swap_cost(i1, j1, i2, j2))
+        # only representative edges can be swapped
+        log_probs_second_edge = np.array(log_probs_second_edge)
+        log_probs_second_edge[~self.graph["edge_representative"]] = -np.inf
+        return log_probs_second_edge
 
     def do_swap(self, k1, k2):
+        ic("Before swap")
+        ic(self.graph)
         i1, j1 = self.graph["ij"][k1]
         i2, j2 = self.graph["ij"][k2]
 
@@ -80,6 +94,49 @@ class LatentState:
         self.graph["ij"][k1] = i1, j2
         self.graph["ij"][k2] = i2, j1
         
+        ic("After swap")
+        ic(self.graph)
+
+        ### update on deletion
+        edges = self.graph["ij"][self.graph["edge_representative"]]
+
+        target_row = np.array([i1, j1])
+        edge_deleted = np.all(np.all(edges != target_row, axis=1))
+        if edge_deleted:
+            self.update_on_deletion(i1, j1)
+        else:
+            # select new representative edge
+            bin_bin_locs = np.where(self.graph["bin_bin"])[0]
+            new_representative_index = bin_bin_locs[0]
+            self.graph["edge_representative"][new_representative_index] = True
+
+        target_row = np.array([i2, j2])
+        if np.all(np.all(edges != target_row, axis=1)):
+            self.update_on_deletion(i2, j2)
+        else:
+            # select new representative edge
+            bin_bin_locs = np.where(self.graph["bin_bin"])[0]
+            new_representative_index = bin_bin_locs[0]
+            self.graph["edge_representative"][new_representative_index] = True
+
+        ### update on insertion
+        other_edges = self.graph["ij"][~[k1, k2]]
+
+        target_row = np.array([i1, j2])
+        edge_inserted = np.all(np.all(other_edges!= target_row, axis=1))
+        if edge_inserted:
+            self.update_on_insertion(i1, j2)
+        else:
+            self.graph["edge_representative"][k1] = False 
+
+        target_row = np.array([i2, j1])
+        other_edges = self.graph["ij"][~[k1, k2]]
+        edge_inserted = np.all(np.all(other_edges!= target_row, axis=1))
+        if edge_inserted:
+            self.update_on_insertion(i2, j1)
+        else:
+            self.graph["edge_representative"][k2] = False
+
         ### update type information about the edges
         
         k1_type = self.type(i1, j1)
@@ -92,64 +149,27 @@ class LatentState:
         self.graph[k1_new_type][k1] = True
         self.graph[k2_new_type][k2] = True
 
-    
-        ### update bin_bin representer
-        
-        # if bin_bin edge was removed, then we select a new representative
-        if self.type(i1, j1) == "bin_bin" or self.type(i2, j2) == "bin_bin":
-            bin_bin_locs = np.where(self.graph["bin_bin"])[0]
-            if len(bin_bin_locs) > 0:
-                # select the first bin_bin edge as a representative
-                self.graph["edge_representative"][bin_bin_locs[0]] = True
-                
-        # if a bin_bin edge is created, we make it to the representative edge
-        if k1_new_type == "bin_bin" or k2_new_type == "bin_bin":
-            # check if there is a previous representative bin_bin edge
-            bin_bin_locs = np.where(self.graph["bin_bin"])[0]
-            if len(bin_bin_locs) > 0:
-                old_reprentative_index = np.where(self.graph["edge_representative"] & self.graph["bin_bin"])[0][0] 
-                # remove representative status
-                self.graph["edge_representative"][old_reprentative_index] = False
-                # edge cannot be swapped with any other edge as it is not a representative edge
-                self.graph["log_p_swap_total"][old_reprentative_index] = -np.inf
-                self.graph["log_p_swap_with_assigned"][old_reprentative_index] = -np.inf
-
         ### compute new log probabilities for swapped entries
         self.add_log_probs(k1)
         self.add_log_probs(k2)
-
-        ### modify all other swap probabilities
-        self.update_log_probs((i1, j1), (i2, j1))
-        self.update_log_probs((i2, j2), (i1, j2))
         return
 
-    def update_log_probs(self, old_pair, new_pair):
-        i, j = old_pair
-        i_prime, j_prime = new_pair
-        
-        # subtract probability of swapping with old pair
-        old_pair_type = self.type(i, j)
-        for k, (i_, j_) in enumerate(self.graph["ij"]):
-                log_prob_key = f"log_p_swap_with_{old_pair_type}"
-                self.graph[k][log_prob_key] = self.log_diff_exp(
-                    self.graph[k][log_prob_key],
-                    -self.swap_cost(i_, j_, i, j)
-                )
-        # add probability of swapping with new pair
-        new_pair_type = self.type(i_prime, j_prime)
-        for k, (i_, j_) in enumerate(self.graph["ij"]):
-                log_prob_key = f"log_p_swap_with_{new_pair_type}"
-                self.graph[k][log_prob_key] = self.log_sum_exp([
-                    self.graph[k][log_prob_key],
-                    -self.swap_cost(i_, j_, i_prime, j_prime)
-                ])
-        # update total swap probability
+    def update_on_deletion(self, i, j):
+        """Update the graph when a representative edge is deleted."""
         for k in range(len(self.graph)):
-            self.graph[k]["log_p_swap_total"] = self.log_sum_exp([
-                self.graph[k]["log_p_swap_with_assigned"],
-                self.graph[k]["log_p_swap_with_unassigned_first_set"],
-                self.graph[k]["log_p_swap_with_unassigned_second_set"],
-                self.graph[k]["log_p_swap_with_bin_bin"]
+            i_, j_ = self.graph["ij"][k]
+            self.graph[k][log_prob_key] = self.log_diff_exp(
+                self.graph[k][log_prob_key],
+                -self.swap_cost(i_, j_, i, j)
+            )
+
+    def update_on_insertion(self, i, j):
+        """Update the graph when a representative edge is inserted."""
+        for k in range(len(self.graph)):
+            i_, j_ = self.graph["ij"][k]
+            self.graph[k][log_prob_key] = self.log_sum_exp([
+                self.graph[k][log_prob_key],
+                -self.swap_cost(i_, j_, i, j)
             ])
 
         
@@ -165,7 +185,7 @@ class LatentState:
                                                                         self.graph[k]["log_p_swap_with_unassigned_first_set"], 
                                                                         self.graph[k]["log_p_swap_with_unassigned_second_set"], 
                                                                         self.graph[k]["log_p_swap_with_bin_bin"]])
-            
+
     def swap_cost(self, i, j, i_prime, j_prime):
         if i == i_prime or j == j_prime:
             return float('inf')
@@ -197,17 +217,16 @@ class LatentState:
 
         # update the log probabilities for each state
         for k, (i, j) in enumerate(graph["ij"]):
-            if graph[k]["edge_representative"]:
-                state_type = self.type(i, j)
-                if state_type == "assigned":
-                    graph[k]["log_p_swap_with_bin_bin"] += change
-                elif state_type == "bin_bin":
-                    graph[k]["log_p_swap_with_assigned"] += change
-                elif state_type == "unassigned_first_set":
-                    graph[k]["log_p_swap_with_unassigned_second_set"] -= change
-                elif state_type == "unassigned_second_set":
-                    graph[k]["log_p_swap_with_unassigned_first_set"] -= change
-                graph[k]["log_p_swap_total"] = self.log_sum_exp([graph[k]["log_p_swap_with_assigned"],
+            state_type = self.type(i, j)
+            if state_type == "assigned":
+                graph[k]["log_p_swap_with_bin_bin"] += change
+            elif state_type == "bin_bin":
+                graph[k]["log_p_swap_with_assigned"] += change
+            elif state_type == "unassigned_first_set":
+                graph[k]["log_p_swap_with_unassigned_second_set"] -= change
+            elif state_type == "unassigned_second_set":
+                graph[k]["log_p_swap_with_unassigned_first_set"] -= change
+            graph[k]["log_p_swap_total"] = self.log_sum_exp([graph[k]["log_p_swap_with_assigned"],
                                                                     graph[k]["log_p_swap_with_unassigned_first_set"],
                                                                     graph[k]["log_p_swap_with_unassigned_second_set"],
                                                                     graph[k]["log_p_swap_with_bin_bin"]])
@@ -222,14 +241,6 @@ class LatentState:
         else:
             return "bin_bin"
     
-    def log_probs_swap_second_edge(self, k1):
-        i1, j1 = self.graph["ij"][k1]
-        log_probs_second_edge = []
-        for k in range(len(self.graph)):
-            i2, j2 = self.graph["ij"][k]
-            log_probs_second_edge.append(-self.swap_cost(i1, j1, i2, j2))
-        return np.array(log_probs_second_edge)
-
     def log_prob_swap(self, k1, k2):
         """Calculate the probability of swapping matching at index k1 with matching at index k2."""
 
@@ -271,7 +282,10 @@ class LatentState:
         """ Compute log(exp(a) - exp(b)) in a numerically stable way.
         This uses the identity log(exp(a) - exp(b)) = a + log(1 - exp(-|a - b|)). 
         """
-        return a + self.log1mexp(np.abs(a - b))
+        if a == -np.inf and b == -np.inf:
+            return -np.inf
+        else:
+            return a + self.log1mexp(np.abs(a - b))
 
     def log1mexp(self, x):
         """

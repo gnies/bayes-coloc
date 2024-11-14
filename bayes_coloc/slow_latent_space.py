@@ -121,8 +121,9 @@ class LatentState:
             if i != i_ and j != j_:
                 state_type = self.state[key]["type"]
                 log_prob_key = f"log_prob_swap_with_{state_type}"
+                log_prob = self.state[(i_, j_)][log_prob_key]
                 self.state[(i_, j_)][log_prob_key] = np.logaddexp(
-                    self.state[(i_, j_)][log_prob_key],
+                    log_prob,
                     -self.swap_cost(i_, j_, i, j)
                 )
                 self.state[(i_, j_)]["log_prob_swap_total"] = self.log_sum_exp([
@@ -172,7 +173,10 @@ class LatentState:
                 value["log_prob_swap_with_unassigned_second_set"] -= change
             elif state_type == "unassigned_second_set":
                 value["log_prob_swap_with_unassigned_first_set"] -= change
-            value["log_prob_swap_total"] = self.log_sum_exp([value["log_prob_swap_with_assigned"], value["log_prob_swap_with_unassigned_first_set"], value["log_prob_swap_with_unassigned_second_set"], value["log_prob_swap_with_bin_bin"]])
+            value["log_prob_swap_total"] = self.log_sum_exp([value["log_prob_swap_with_assigned"],
+                value["log_prob_swap_with_unassigned_first_set"],
+                value["log_prob_swap_with_unassigned_second_set"],
+                value["log_prob_swap_with_bin_bin"]])
         return 
 
     def type(self, i, j):

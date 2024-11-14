@@ -48,9 +48,8 @@ class LatentState:
             graph[i + j] = (i, j, True, False, False, False, True, -np.inf, -np.inf, -np.inf, -np.inf, -np.inf)
 
         # Create an empty structured array
-        total_rows = n+m
-        graph = -np.empty(total_rows, dtype=dtype)
-        graph = graph
+        total_rows = self.n + self.m
+        graph = np.empty(total_rows, dtype=dtype)
         edges = graph["i", "j"]
         mat = np.empty((len(edges), len(edges)))
         for k, (i, j) in enumerate(edges):
@@ -64,7 +63,7 @@ class LatentState:
             else:
                 graph[k]["log_p_swap_with_unassigned_first_set"] = log_probs_k
                 graph["log_p_swap_total"] = log_probs_k
-        return graph
+                graph[k]["log_p_swap_total"] = log_probs_k
         
     def log_prob_marginal(self):
         """Compute the marginal log probabilities of each state."""
@@ -108,7 +107,7 @@ class LatentState:
             # check if there is a previous representative bin_bin edge
             bin_bin_locs = np.where(self.graph["bin_bin"])[0]
             if len(bin_bin_locs) > 0:
-                old_reprentative_index = np.where[graph["edge_representative"] & graph["bin_bin"]][0][0] 
+                old_reprentative_index = np.where(graph["edge_representative"] & graph["bin_bin"])[0][0] 
                 # remove representative status
                 self.graph["edge_representative"][old_reprentative_index] = False
                 # edge cannot be swapped with any other edge as it is not a representative edge
@@ -154,15 +153,18 @@ class LatentState:
 
         
     def add_log_probs(self, k):
-        graph = self.graph
+        """
+        Add the log probabilities of swapping the edge at index k with all other edges of the same type.
+        """
         i, j = self.graph["i", "j"][k]
         for type_ in ["assigned", "unassigned_first_set", "unassigned_second_set", "bin_bin"]:
-
-        graph[k][f"log_prob_swap_with_{type_}"] = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), di in self.graph.items() if di["type"] == type_ and ])
-        log_prob_key = f"log_prob_swap_with_{state_type}"
-        self.graph[k][log_prob_key] = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_), di in self.graph.items() if di["type"] == state_type])
-        self.graph[k]["log_prob_swap_total"] = self.log_sum_exp([self.graph[k]["log_prob_swap_with_assigned"], self.graph[k]["log_prob_swap_with_unassigned_first_set"], self.graph[k]["log_prob_swap_with_unassigned_second_set"], self.graph[k]["log_prob_swap_with_bin_bin"]])
-        
+            log_prob_key = f"log_prob_swap_with_{type_}"
+            self.graph[k][log_prob_key] = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in self.graph["i", "j"] if self.type(i_, j_) == state_type])
+            self.graph[k]["log_prob_swap_total"] = self.log_sum_exp([self.graph[k]["log_prob_swap_with_assigned"], 
+                                                                        self.graph[k]["log_prob_swap_with_unassigned_first_set"], 
+                                                                        self.graph[k]["log_prob_swap_with_unassigned_second_set"], 
+                                                                        self.graph[k]["log_prob_swap_with_bin_bin"]])
+            
     def swap_cost(self, i, j, i_prime, j_prime):
         if i == i_prime or j == j_prime:
             return float('inf')
@@ -246,7 +248,7 @@ class LatentState:
         log_prob_swap = self.log_prob_swap(k1, k2)
 
         # undo swap
-        self.do_swap(key1_new, key2_new)
+        self.do_swap(k1, k2)
 
         return log_prob_swap
 
@@ -263,13 +265,15 @@ class LatentState:
 
     def log_diff_exp(self, a, b):
         """ Compute log(exp(a) - exp(b)) in a numerically stable way.
-        This uses the identity log(exp(a) - exp(b)) = a + log(1 - exp(-|a - b|)) 
+        This uses the identity log(exp(a) - exp(b)) = a + log(1 - exp(-|a - b|)). 
         """
         return a + self.log1mexp(np.abs(a - b))
 
     def log1mexp(self, x):
-        """ Compute log(1 - exp(-|x|)) in a numerically stable way.
-        This is based on the paper: "Accurately Computing log(1 - exp(-|a|))". Assesed by the Rmpfr package" by Martin Maechler, ETH Zurich. """
+        """
+        This is based on the paper: "Accurately Computing log(1 - exp(-|a|))". Assessed by the Rmpfr package" by Martin Maechler, ETH Zurich. 
+        """
+    
         if x == 0: # this just serves to suppresses warnings from the log function
             return float('-inf')
         elif x < np.log(2):

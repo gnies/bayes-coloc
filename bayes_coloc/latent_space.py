@@ -221,6 +221,10 @@ class LatentState:
         else:
             return "bin_bin"
     
+    def log_probs_swap_second_edge(self, k1):
+        log_probs_second_edge = [self.swap_cost(i1, j1, i2, j2) for (i, j) in self.graph["i", "j"]]
+        return np.array(log_probs_second_edge)
+
     def log_prob_swap(self, k1, k2):
         """Calculate the probability of swapping matching at index k1 with matching at index k2."""
 
@@ -230,7 +234,7 @@ class LatentState:
         log_probs = self.log_prob_marginal()
         l1 = log_probs[k1] - self.log_sum_exp(log_probs)
         
-        log_probs_second_edge = [self.swap_cost(i1, j1, i2, j2)]
+        log_probs_second_edge = self.log_probs_swap_second_edge(k1)
         l2 = log_probs_second_edge[k2] - self.log_sum_exp(log_probs_second_edge)
     
         return l1 + l2

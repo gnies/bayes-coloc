@@ -1,5 +1,5 @@
 from .optimized_swap_proposal import MCMC
-from .slow_latent_space import LatentState
+from .latent_space import LatentState
 import numpy as np
 from icecream import ic
 

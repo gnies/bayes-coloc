@@ -3,7 +3,7 @@ from math import lgamma
 from tqdm import tqdm
 from icecream import ic
 from numpy import log as ln
-from .slow_latent_space import LatentState
+from .latent_space import LatentState
 # from .latent_state import LatentState
 
 class MCMC:
@@ -132,17 +132,14 @@ class MCMC:
 
     def sample_swap(self):
         """Sample a pair of keys to swap."""
-        keys = self.latent_state.keys()
         log_probs = self.latent_state.log_prob_marginal()
 
-        index1 = gumel_max(log_probs)
-        key1 = keys[index1]
+        k1 = gumel_max(log_probs)
     
-        log_probs = [-self.latent_state.swap_cost(*key1, *key) for key in keys]
-        index2 = gumel_max(log_probs)
-        key2 = keys[index2]
+        log_probs2 = self.latent_state.log_probs_swap_second_edge(k1)
+        k2 = gumel_max(log_probs)
     
-        return key1, key2
+        return k1, k2
 
     def MH_move_for_latent_variable(self):
         """ Perform a single Metropolis-Hastings move"""
@@ -158,8 +155,9 @@ class MCMC:
         reverse_swap_log_prob = self.latent_state.log_prob_reverse_swap(k0, k1)
         
         # likelihood ratio
-        (i0, j0) = k0
-        (i1, j1) = k1
+        (i0, j0) = self.latent_state.graph[k0]["i"], self.latent_state.graph[k0]["j"]
+        (i1, j1) = self.latent_state.graph[k1]["i"], self.latent_state.graph[k1]["j"]
+
         log_acceptance_ratio = - self.cost(i0, j1, current_param) - self.cost(i1, j0, current_param) + self.cost(i0, j0, current_param) + self.cost(i1, j1, current_param)
 
         # balance ratio

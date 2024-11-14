@@ -89,7 +89,7 @@ class MCMC:
         self.latent_state = LatentState(self.nx, self.ny, alpha, beta, gamma , proposal_cost)
 
         #### initialize the trajectory
-        path = self.latent_state.numpy_path()
+        path = self.latent_state.graph["ij"]
         self.save_to_trajectory(start_params, path, accepted_latent=False, accepted_param=False,
                 save_latent=self.save_latent_trajectory)
         
@@ -132,12 +132,12 @@ class MCMC:
 
     def sample_swap(self):
         """Sample a pair of keys to swap."""
-        log_probs = self.latent_state.log_prob_marginal()
 
+        log_probs = self.latent_state.log_prob_marginal()
         k1 = gumel_max(log_probs)
     
         log_probs2 = self.latent_state.log_probs_swap_second_edge(k1)
-        k2 = gumel_max(log_probs)
+        k2 = gumel_max(log_probs2)
     
         return k1, k2
 
@@ -155,8 +155,8 @@ class MCMC:
         reverse_swap_log_prob = self.latent_state.log_prob_reverse_swap(k0, k1)
         
         # likelihood ratio
-        (i0, j0) = self.latent_state.graph[k0]["i"], self.latent_state.graph[k0]["j"]
-        (i1, j1) = self.latent_state.graph[k1]["i"], self.latent_state.graph[k1]["j"]
+        (i0, j0) = self.latent_state.graph[k0]["ij"]
+        (i1, j1) = self.latent_state.graph[k1]["ij"]
 
         log_acceptance_ratio = - self.cost(i0, j1, current_param) - self.cost(i1, j0, current_param) + self.cost(i0, j0, current_param) + self.cost(i1, j1, current_param)
 
@@ -170,7 +170,7 @@ class MCMC:
             self.latent_state.do_swap(k0, k1)
 
         # update trajectory
-        paths = self.latent_state.numpy_path()
+        paths = self.latent_state.graph["ij"]
         self.save_to_trajectory(current_param, paths, accepted, accepted_param=False,
                 save_latent=self.save_latent_trajectory)
         return accepted
@@ -178,7 +178,7 @@ class MCMC:
     def MH_move_for_parameter(self):
         current_param = self.param_trajectory[-1]
         proposed_param = self.param_proposal(current_param)
-        paths = self.latent_state.numpy_path()
+        paths = self.latent_state.graph["ij"]
         I, J = paths.T
         log_acceptance_ratio = np.sum(-self.cost(I, J, proposed_param) + self.cost(I, J, current_param))
         u = ln(np.random.random())
@@ -294,7 +294,6 @@ class MCMC:
    
 def gumel_max(log_probs):
     """ Use the Gumbel-Max trick to sample an index directly from the unscaled log probabilities."""
-    log_probs = np.asarray(log_probs)
     real_log_probs_indices = np.where(log_probs > -np.inf)[0]
     real_log_probs = log_probs[real_log_probs_indices]
     gumbels = np.random.gumbel(size=len(real_log_probs))

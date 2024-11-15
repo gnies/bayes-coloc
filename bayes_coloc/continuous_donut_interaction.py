@@ -95,7 +95,7 @@ class DonutInteraction(MCMC):
         self.latent_state = LatentState(self.nx, self.ny, alpha, beta, gamma , proposal_cost)
 
         #### initialize the trajectory
-        path = self.latent_state.numpy_path()
+        path = self.latent_state.graph["ij"]
         self.save_to_trajectory(start_params, path, accepted_latent=False, accepted_param=False,
                 save_latent=self.save_latent_trajectory)
 

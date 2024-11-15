@@ -5,6 +5,7 @@ from icecream import ic
 from numpy import log as ln
 from .latent_space import LatentState
 # from .latent_state import LatentState
+ic.disable()
 
 class MCMC:
     def __init__(self, x, y,
@@ -108,6 +109,7 @@ class MCMC:
         # sampling period
         n_accepted = 0
         for _ in tqdm(range(n_samples), desc='Sampling'):
+            ic("    ITERATION   ", _)
             accepted = self.MH_move()
                 
         # store acceptance rate

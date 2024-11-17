@@ -180,13 +180,13 @@ class LatentState:
             i, j = graph['i'][k], graph['j'][k]
             edge_type = self.type(i, j)
             if edge_type == 0:
-                graph["log_prob_swap_with_3"] += change
+                graph["log_prob_swap_with_3"][k] += change
             elif edge_type == 3:
-                graph["log_prob_swap_with_0"] += change
+                graph["log_prob_swap_with_0"][k] += change
             elif edge_type == 1:
-                graph["log_prob_swap_with_2"] -= change
+                graph["log_prob_swap_with_2"][k] -= change
             elif edge_type == 2:
-                graph["log_prob_swap_with_1"] -= change
+                graph["log_prob_swap_with_1"][k] -= change
             graph["log_prob_swap_total"][k] = self.log_sum_exp([
                 graph["log_prob_swap_with_0"][k],
                 graph["log_prob_swap_with_1"][k],

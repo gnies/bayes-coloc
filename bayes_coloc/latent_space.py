@@ -1,5 +1,7 @@
+import math
 import numpy as np
 from scipy.special import logsumexp, expm1 
+from .mygraph import Graph
 
 # This function is used to avoid warnings
 def ln(x):
@@ -17,246 +19,41 @@ class LatentState:
         self.beta = beta
         self.gamma = gamma
         self.cost = cost
-        self.graph = self.construct_no_matching_graph()
+        self.graph = Graph(n, m)
+        self.initialize_states()
 
-    def construct_no_matching_graph(self):
-        """ Initialize the graph with no matchings."""
-
-        # initialize the log probabilities of swapping
-        log_probs = self.log_prob_marginal_slow()
-        graph['log_p_swap_total'] = log_probs
-        dtype = [
-            ('i', 'i4'), 
-            ('j', 'i4'), 
-            ('edge_representative', 'bool'),
-            ('assigned', 'bool'),
-            ('bin_bin', 'bool'),
-            ('unassigned_first_set', 'bool'),
-            ('unassigned_second_set', 'bool'),
-            ('log_p_swap_with_assigned', 'f8'), 
-            ('log_p_swap_with_bin_bin', 'f8'), 
-            ('log_p_swap_with_unassigned_first_set', 'f8'), 
-            ('log_p_swap_with_unassigned_second_set', 'f8'), 
-            ('log_p_swap_total', 'f8')
-        ]
+    def initialize_states(self):
         for i in range(self.n):
-            j = self.m
-            graph[i] = (i, j, True, False, False, True, False, -np.inf, -np.inf, -np.inf, -np.inf, -np.inf)
-
+            self.add_entry((i, self.m), 1)
         for j in range(self.m):
-            i = self.n
-            graph[i + j] = (i, j, True, False, False, False, True, -np.inf, -np.inf, -np.inf, -np.inf, -np.inf)
+            self.add_entry((self.n, j), 1)
 
-        # Create an empty structured array
-        total_rows = self.n + self.m
-        graph = np.empty(total_rows, dtype=dtype)
-        edges = graph["i", "j"]
-        mat = np.empty((len(edges), len(edges)))
-        for k, (i, j) in enumerate(edges):
-            for l, (i_prime, j_prime) in enumerate(edges):
-                mat[k, l] = self.swap_cost(i, j, i_prime, j_prime)
+    def compute_log_prob_matrix(self):
+        """Compute the log probability matrix. This is used for testing purposes."""
+        graph = self.graph.numpy_graph()
+        keys = [(edge['i'], edge['j']) for edge in graph]
 
-        for k in range(total_rows):
-            log_probs_k = self.log_sum_exp(mat[k, :])
-            if k < self.n:
-                graph[k]["log_p_swap_with_unassigned_second_set"] = log_probs_k
-            else:
-                graph[k]["log_p_swap_with_unassigned_first_set"] = log_probs_k
-                graph["log_p_swap_total"] = log_probs_k
-                graph[k]["log_p_swap_total"] = log_probs_k
-        
-    def log_prob_marginal(self):
-        """Compute the marginal log probabilities of each state."""
-        return self.graph["log_p_swap_total"]
+        log_prob_matrix = np.empty((len(keys), len(keys)))
+        for (i, j) in keys:
+            for (i_, j_) in keys:
+                log_prob_matrix[keys.index((i, j)), keys.index((i_, j_))] = -self.swap_cost(i, j, i_, j_)
+        return log_prob_matrix
 
-    def all_edges_of_type(self, state_type):
-        """Return all representing edges of a given type."""
-        return self.graph[self.graph["edge_representative"] & (self.graph[state_type])]
-
-    def do_swap(self, k1, k2):
-        i1, j1 = self.graph["i", "j"][k1]
-        i2, j2 = self.graph["i", "j"][k2]
-
-        ### do swap
-        self.graph["i", "j"][k1] = i1, j2
-        self.graph["i", "j"][k2] = i2, j1
-        
-        ### update type information about the edges
-        
-        k1_type = self.type(i1, j1)
-        k2_type = self.type(i2, j2)
-        self.graph[k1_type][k1] = False
-        self.graph[k2_type][k2] = False
-        
-        k1_new_type = self.type(i1, j2)
-        k2_new_type = self.type(i2, j1)
-        self.graph[k1_new_type][k1] = True
-        self.graph[k2_new_type][k2] = True
-    
-        ### update bin_bin representer
-        
-        # if bin_bin edge was removed, then we select a new representative
-        if self.type(i1, j1) == "bin_bin" or self.type(i2, j2) == "bin_bin":
-            bin_bin_locs = np.where(self.graph["bin_bin"])[0]
-            if len(bin_bin_locs) > 0:
-                # select the first bin_bin edge as a representative
-                self.graph["edge_representative"][bin_bin_locs[0]] = True
-                
-        # if a bin_bin edge is created, we make it to the representative edge
-        if k1_new_type == "bin_bin" or k2_new_type == "bin_bin":
-            # check if there is a previous representative bin_bin edge
-            bin_bin_locs = np.where(self.graph["bin_bin"])[0]
-            if len(bin_bin_locs) > 0:
-                old_reprentative_index = np.where(graph["edge_representative"] & graph["bin_bin"])[0][0] 
-                # remove representative status
-                self.graph["edge_representative"][old_reprentative_index] = False
-                # edge cannot be swapped with any other edge as it is not a representative edge
-                self.graph["log_p_swap_total"][old_reprentative_index] = -np.inf
-                self.graph["log_p_swap_with_assigned"][old_reprentative_index] = -np.inf
-
-        ### compute new log probabilities for swapped entries
-        self.add_log_probs(k1)
-        self.add_log_probs(k2)
-
-        ### modify all other swap probabilities
-        self.update_log_probs((i1, j1), (i2, j1))
-        self.update_log_probs((i2, j2), (i1, j2))
-
-    def update_log_probs(self, old_pair, new_pair):
-        i, j = old_pair
-        i_prime, j_prime = new_pair
-        
-        # subtract probability of swapping with old pair
-        old_pair_type = self.type(i, j)
-        for k, (i_, j_) in enumerate(self.graph["i", "j"]):
-                log_prob_key = f"log_prob_swap_with_{old_pair_type}"
-                self.graph[k][log_prob_key] = self.log_diff_exp(
-                    self.graph[k][log_prob_key],
-                    -self.swap_cost(i_, j_, i, j)
-                )
-        # add probability of swapping with new pair
-        new_pair_type = self.type(i_prime, j_prime)
-        for k, (i_, j_) in enumerate(self.graph["i", "j"]):
-                log_prob_key = f"log_prob_swap_with_{new_pair_type}"
-                self.graph[k][log_prob_key] = self.log_sum_exp([
-                    self.graph[k][log_prob_key],
-                    -self.swap_cost(i_, j_, i_prime, j_prime)
-                ])
-        # update total swap probability
-        for k in range(len(self.graph)):
-            self.graph[k]["log_prob_swap_total"] = self.log_sum_exp([
-                self.graph[k]["log_prob_swap_with_assigned"],
-                self.graph[k]["log_prob_swap_with_unassigned_first_set"],
-                self.graph[k]["log_prob_swap_with_unassigned_second_set"],
-                self.graph[k]["log_prob_swap_with_bin_bin"]
-            ])
-
-        
-    def add_log_probs(self, k):
-        """
-        Add the log probabilities of swapping the edge at index k with all other edges of the same type.
-        """
-        i, j = self.graph["i", "j"][k]
-        for type_ in ["assigned", "unassigned_first_set", "unassigned_second_set", "bin_bin"]:
-            log_prob_key = f"log_prob_swap_with_{type_}"
-            self.graph[k][log_prob_key] = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in self.graph["i", "j"] if self.type(i_, j_) == state_type])
-            self.graph[k]["log_prob_swap_total"] = self.log_sum_exp([self.graph[k]["log_prob_swap_with_assigned"], 
-                                                                        self.graph[k]["log_prob_swap_with_unassigned_first_set"], 
-                                                                        self.graph[k]["log_prob_swap_with_unassigned_second_set"], 
-                                                                        self.graph[k]["log_prob_swap_with_bin_bin"]])
-            
-    def swap_cost(self, i, j, i_prime, j_prime):
-        if i == i_prime or j == j_prime:
-            return float('inf')
-        else:
-            res = (self.cost[i, j_prime] + self.cost[i_prime, j] -
-                   self.cost[i, j] - self.cost[i_prime, j_prime])
-
-        intensity_cost_diff = ln(self.gamma) - ln(self.alpha) - ln(self.beta)
-        if self.type(i, j) == "assigned" and self.type(i_prime, j_prime) == "bin_bin":
-            res += intensity_cost_diff
-        elif self.type(i, j) == "bin_bin" and self.type(i_prime, j_prime) == "assigned":
-            res += intensity_cost_diff
-
-        elif self.type(i, j) == "unassigned_first_set" and self.type(i_prime, j_prime) == "unassigned_second_set":
-            res -= intensity_cost_diff
-        elif self.type(i, j) == "unassigned_second_set" and self.type(i_prime, j_prime) == "unassigned_first_set":
-            res -= intensity_cost_diff
+    def log_prob_marginal_slow(self):
+        """Compute the marginal log probabilities of each state in a slow way. This is used for testing purposes."""
+        log_prob_matrix = self.compute_log_prob_matrix()
+        l, _ = log_prob_matrix.shape
+        res = np.empty(l)
+        for i in range(l):
+            res[i] = self.log_sum_exp(log_prob_matrix[i, :])
         return res
 
-    def update_intensities(self, alpha, beta, gamma):
-        """Update the intensities alpha, beta, and gamma, and adjust relevant log probabilities."""
-        graph = self.graph
-        a_old, b_old, c_old = self.alpha, self.beta, self.gamma
-        self.alpha, self.beta, self.gamma = alpha, beta, gamma
-    
-        # Compute the change in log scale
-        change = (ln(alpha) + ln(beta) - ln(gamma)) 
-        change -= (ln(a_old) + ln(b_old) - ln(c_old))
+    def log_prob_marginal(self):
+        """Compute the marginal log probabilities of each state."""
+        graph = self.graph.numpy_graph()
+        log_probs = graph['log_prob_swap_total']
+        return log_probs
 
-        # update the log probabilities for each state
-        for k, (i, j) in enumerate(graph["i", "j"]):
-            if graph[k]["edge_representative"]:
-                state_type = self.type(i, j)
-                if state_type == "assigned":
-                    graph[k]["log_prob_swap_with_bin_bin"] += change
-                elif state_type == "bin_bin":
-                    graph[k]["log_prob_swap_with_assigned"] += change
-                elif state_type == "unassigned_first_set":
-                    graph[k]["log_prob_swap_with_unassigned_second_set"] -= change
-                elif state_type == "unassigned_second_set":
-                    graph[k]["log_prob_swap_with_unassigned_first_set"] -= change
-                graph[k]["log_prob_swap_total"] = self.log_sum_exp([graph[k]["log_prob_swap_with_assigned"],
-                                                                    graph[k]["log_prob_swap_with_unassigned_first_set"],
-                                                                    graph[k]["log_prob_swap_with_unassigned_second_set"],
-                                                                    graph[k]["log_prob_swap_with_bin_bin"]])
-
-    def type(self, i, j):
-        if i < self.n and j < self.m:
-            return "assigned"
-        elif i == self.n and j < self.m:
-            return "unassigned_second_set"
-        elif i < self.n and j == self.m:
-            return "unassigned_first_set"
-        else:
-            return "bin_bin"
-    
-    def log_prob_swap(self, k1, k2):
-        """Calculate the probability of swapping matching at index k1 with matching at index k2."""
-
-        i1, j1 = self.graph["i", "j"][k1]
-        i2, j2 = self.graph["i", "j"][k2]
-        
-        log_probs = self.log_prob_marginal()
-        l1 = log_probs[k1] - self.log_sum_exp(log_probs)
-        
-        log_probs_second_edge = [self.swap_cost(i1, j1, i2, j2)]
-        l2 = log_probs_second_edge[k2] - self.log_sum_exp(log_probs_second_edge)
-    
-        return l1 + l2
-
-    def log_prob_reverse_swap(self, k1, k2):
-        """Calculate the probability of reversing the swap of matching at index k1 with matching at index k2."""
-
-        i1, j1 = self.graph["i", "j"][k1]
-        i2, j2 = self.graph["i", "j"][k2]
-
-        # do swap
-        self.do_swap(k1, k2)
-        
-        # calculate the probablity of going back
-        log_prob_swap = self.log_prob_swap(k1, k2)
-
-        # undo swap
-        self.do_swap(k1, k2)
-
-        return log_prob_swap
-
-    def numpy_path(self):
-        """Return a numpy array representing the assignments."""
-        path = self.graph["i", "j"]
-        return path
-    
     def log_sum_exp(self, values):
         if len(values) == 0:
             return float('-inf')
@@ -265,15 +62,15 @@ class LatentState:
 
     def log_diff_exp(self, a, b):
         """ Compute log(exp(a) - exp(b)) in a numerically stable way.
-        This uses the identity log(exp(a) - exp(b)) = a + log(1 - exp(-|a - b|)). 
+        This uses the identity log(exp(a) - exp(b)) = a + log(1 - exp(-|a - b|)) 
         """
+        if a==-np.inf and b==-np.inf: # log of 0 should be -inf
+            return -np.inf
         return a + self.log1mexp(np.abs(a - b))
 
     def log1mexp(self, x):
-        """
-        This is based on the paper: "Accurately Computing log(1 - exp(-|a|))". Assessed by the Rmpfr package" by Martin Maechler, ETH Zurich. 
-        """
-    
+        """ Compute log(1 - exp(-|x|)) in a numerically stable way.
+        This is based on the paper: "Accurately Computing log(1 - exp(-|a|))". Assesed by the Rmpfr package" by Martin Maechler, ETH Zurich. """
         if x == 0: # this just serves to suppresses warnings from the log function
             return float('-inf')
         elif x < np.log(2):
@@ -281,3 +78,201 @@ class LatentState:
         else:
             return np.log1p(-np.exp(-np.abs(x)))
 
+    def swap_cost(self, i, j, i_prime, j_prime):
+        if i == i_prime or j == j_prime:
+            return float('inf')
+        else:
+            res = (self.cost[i, j_prime] + self.cost[i_prime, j] -
+                   self.cost[i, j] - self.cost[i_prime, j_prime])
+
+        intensity_cost_diff = ln(self.gamma) - ln(self.alpha) - ln(self.beta)
+        if self.type(i, j) == 0 and self.type(i_prime, j_prime) == 3:
+            res += intensity_cost_diff
+        elif self.type(i, j) == 3 and self.type(i_prime, j_prime) == 0:
+            res += intensity_cost_diff
+
+        elif self.type(i, j) == 1 and self.type(i_prime, j_prime) == 2:
+            res -= intensity_cost_diff
+        elif self.type(i, j) == 2 and self.type(i_prime, j_prime) == 1:
+            res -= intensity_cost_diff
+        return res
+
+    def add_entry(self, key, flow):
+        i, j = key
+        edge_type = self.type(i, j)
+        edges0 = self.graph.get_edges_of_type(0)
+        edges1 = self.graph.get_edges_of_type(1)
+        edges2 = self.graph.get_edges_of_type(2)
+        edges3 = self.graph.get_edges_of_type(3)
+
+        log_prob_swap_with_0 = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in edges0])
+        log_prob_swap_with_1 = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in edges1])
+        log_prob_swap_with_2 = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in edges2])
+        log_prob_swap_with_3 = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in edges3])
+
+        log_prob_swap = self.log_sum_exp([log_prob_swap_with_0, log_prob_swap_with_1, log_prob_swap_with_2, log_prob_swap_with_3])
+
+        self.graph.add_edge(i, j, flow, log_prob_swap_with_0, log_prob_swap_with_1, log_prob_swap_with_2, log_prob_swap_with_3, log_prob_swap, edge_type)
+
+        # update all other entries on addition
+        self.update_log_probs_on_add(key)
+
+    def remove_entry(self, key):
+        i, j = key
+        if self.graph.edge_exists(i, j):
+            self.graph.delete_edge(i, j)
+            self.update_log_probs_on_remove(key)
+
+    def update_log_probs_on_add(self, key):
+        graph = self.graph.numpy_graph()
+        i, j = key
+        edge_type = self.type(i, j)
+        log_prob_key = f"log_prob_swap_with_{edge_type}"
+
+        for k in range(len(graph)):
+            i_, j_ = graph[k]['i'], graph[k]['j']
+            old_log_prob = graph[log_prob_key][k]
+
+            swap_cost = self.swap_cost(i, j, i_, j_)
+            new_swap_prob = np.logaddexp(old_log_prob, -swap_cost)
+            
+            graph[log_prob_key][k] = new_swap_prob
+            new_total = self.log_sum_exp([
+                graph["log_prob_swap_with_0"][k],
+                graph["log_prob_swap_with_1"][k],
+                graph["log_prob_swap_with_2"][k],
+                graph["log_prob_swap_with_3"][k]
+            ])
+            graph["log_prob_swap_total"][k] =  new_total
+
+    def update_log_probs_on_remove(self, key):
+        i, j = key
+        graph = self.graph.numpy_graph()
+        edge_type = self.type(i, j)  
+        log_prob_key = f"log_prob_swap_with_{edge_type}"
+        for k in range(len(graph)):
+            i_, j_ = graph[k]['i'], graph[k]['j']
+            if i != i_ and j != j_:
+                old_log_prob = graph[log_prob_key][k]
+                graph[log_prob_key][k] = self.log_diff_exp(
+                    old_log_prob,
+                    -self.swap_cost(i_, j_, i, j)
+                )
+                graph["log_prob_swap_total"][k] = self.log_sum_exp([
+                    graph["log_prob_swap_with_0"][k],
+                    graph["log_prob_swap_with_1"][k],
+                    graph["log_prob_swap_with_2"][k],
+                    graph["log_prob_swap_with_3"][k]
+                ])
+
+    def update_intensities(self, alpha, beta, gamma):
+        """Update the intensities alpha, beta, and gamma, and adjust relevant log probabilities."""
+        a_old, b_old, c_old = self.alpha, self.beta, self.gamma
+        self.alpha, self.beta, self.gamma = alpha, beta, gamma
+    
+        # Compute the change in log scale
+        change = (ln(alpha) + ln(beta) - ln(gamma)) 
+        change -= (ln(a_old) + ln(b_old) - ln(c_old))
+    
+        # Update the log probabilities for each state
+        graph = self.graph.numpy_graph()
+        for k in range(len(graph)):
+            i, j = graph['i'][k], graph['j'][k]
+            edge_type = self.type(i, j)
+            if edge_type == 0:
+                graph["log_prob_swap_with_3"] += change
+            elif edge_type == 3:
+                graph["log_prob_swap_with_0"] += change
+            elif edge_type == 1:
+                graph["log_prob_swap_with_2"] -= change
+            elif edge_type == 2:
+                graph["log_prob_swap_with_1"] -= change
+            graph["log_prob_swap_total"][k] = self.log_sum_exp([
+                graph["log_prob_swap_with_0"][k],
+                graph["log_prob_swap_with_1"][k],
+                graph["log_prob_swap_with_2"][k],
+                graph["log_prob_swap_with_3"][k]])
+        return 
+
+    def type(self, i, j):
+        if i < self.n and j < self.m:
+            return 0
+        elif i < self.n and j == self.m:
+            return 1
+        elif i == self.n and j < self.m:
+            return 2
+        else:
+            return 3
+
+    def set_key_flow(self, key, flow):
+        (i, j) = key
+        if flow == 0:
+            self.remove_entry(key)
+        else:
+            k = self.graph.get_edge_index(i, j)
+            graph = self.graph.numpy_graph()
+            graph["flow"][k] = flow
+            
+
+    def get_key_flow(self, key):
+        i, j = key
+        if not self.graph.edge_exists(i, j):
+            self.add_entry(key, 0)
+        k = self.graph.get_edge_index(i, j)
+        return self.graph.memory[k]["flow"]
+
+    def do_swap(self, key1, key2):
+        # print(self.graph.numpy_graph())
+        m1 = self.get_key_flow(key1)
+        m2 = self.get_key_flow(key2)
+
+        self.set_key_flow(key1, m1 - 1)
+        self.set_key_flow(key2, m2 - 1)
+
+        new_key1 = (key1[0], key2[1])
+        new_key2 = (key2[0], key1[1])
+
+        n1 = self.get_key_flow(new_key1)
+        n2 = self.get_key_flow(new_key2)
+
+        self.set_key_flow(new_key1, n1 + 1)
+        self.set_key_flow(new_key2, n2 + 1)
+
+    def keys(self):
+        graph = self.graph.numpy_graph()
+        return [(edge['i'], edge['j']) for edge in graph]
+
+    def log_prob_swap(self, key1, key2):
+        """Calculate the probability of swapping key1 with key2."""
+        graph = self.graph.numpy_graph()
+        keys = [(edge['i'], edge['j']) for edge in graph]
+        log_probs = self.log_prob_marginal()
+
+        l1 = log_probs[keys.index(key1)] - self.log_sum_exp(log_probs)
+    
+        log_probs = [-self.swap_cost(*key1, *key) for key in keys]
+        l2 = log_probs[keys.index(key2)] - self.log_sum_exp(log_probs)
+    
+        return l1 + l2
+
+    def log_prob_reverse_swap(self, key1, key2):
+        """Calculate the probability of reversing the swap of key1 with key2."""
+        (i, j), (i_prime, j_prime) = key1, key2
+        key1_new = (i, j_prime)
+        key2_new = (i_prime, j)
+
+        # to avoid numerical instability, we make a copy of the current state
+        self.do_swap(key1, key2)
+        log_prob_swap = self.log_prob_swap(key1_new, key2_new)
+
+        # undo swap
+        self.do_swap(key1_new, key2_new)
+
+        return log_prob_swap
+
+
+    def numpy_path(self):
+        """Return a numpy array representing the assignments."""
+        path = self.graph.numpy_path()
+        return path
+    

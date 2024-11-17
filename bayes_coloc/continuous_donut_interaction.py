@@ -1,5 +1,6 @@
 from .optimized_swap_proposal import MCMC
-from .slow_latent_space import LatentState
+from .latent_space import LatentState
+from .slow_latent_space import LatentState as SlowLatentState
 import numpy as np
 from icecream import ic
 
@@ -93,6 +94,7 @@ class DonutInteraction(MCMC):
 
         alpha, beta, gamma = start_params['alpha'], start_params['beta'], start_params['gamma']
         self.latent_state = LatentState(self.nx, self.ny, alpha, beta, gamma , proposal_cost)
+        self.slow_latent_state = SlowLatentState(self.nx, self.ny, alpha, beta, gamma, proposal_cost)
 
         #### initialize the trajectory
         path = self.latent_state.numpy_path()

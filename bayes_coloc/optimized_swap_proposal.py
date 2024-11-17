@@ -3,8 +3,8 @@ from math import lgamma
 from tqdm import tqdm
 from icecream import ic
 from numpy import log as ln
-from .slow_latent_space import LatentState
-# from .latent_state import LatentState
+from .latent_space import LatentState
+from .slow_latent_space import LatentState as SlowLatentState
 
 class MCMC:
     def __init__(self, x, y,
@@ -87,6 +87,7 @@ class MCMC:
 
         alpha, beta, gamma = start_params['alpha'], start_params['beta'], start_params['gamma']
         self.latent_state = LatentState(self.nx, self.ny, alpha, beta, gamma , proposal_cost)
+        self.slow_latent_state = SlowLatentState(self.nx, self.ny, alpha, beta, gamma, proposal_cost)
 
         #### initialize the trajectory
         path = self.latent_state.numpy_path()
@@ -133,7 +134,14 @@ class MCMC:
     def sample_swap(self):
         """Sample a pair of keys to swap."""
         keys = self.latent_state.keys()
+        keys_slow = self.slow_latent_state.keys()
+        # print(keys)
+        # print(keys_slow)
         log_probs = self.latent_state.log_prob_marginal()
+        log_probs_slow = self.slow_latent_state.log_prob_marginal()
+        # print("log_probs", log_probs)
+        # print("log_probs_slow", log_probs_slow)
+        # print(" this diff", log_probs - log_probs_slow)
 
         index1 = gumel_max(log_probs)
         key1 = keys[index1]

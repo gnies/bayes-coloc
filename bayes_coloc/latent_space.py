@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from scipy.special import logsumexp, expm1 
+from scipy.special import logsumexp
 from .mygraph import Graph
 
 # This function is used to avoid warnings
@@ -54,29 +54,106 @@ class LatentState:
         log_probs = graph['log_prob_swap_total']
         return log_probs
 
-    def log_sum_exp(self, values):
+    def log_sum_exp(self, values, axis=None):
         if len(values) == 0:
             return float('-inf')
         else:
-            return logsumexp(values)
+            return logsumexp(values, axis=axis)
 
     def log_diff_exp(self, a, b):
-        """ Compute log(exp(a) - exp(b)) in a numerically stable way.
-        This uses the identity log(exp(a) - exp(b)) = a + log(1 - exp(-|a - b|)) 
         """
-        if a==-np.inf and b==-np.inf: # log of 0 should be -inf
-            return -np.inf
-        return a + self.log1mexp(np.abs(a - b))
+        Compute log(exp(a) - exp(b)) in a numerically stable way using vectorized operations.
+        Uses the identity log(exp(a) - exp(b)) = a + log(1 - exp(-|a - b|)).
+        
+        Parameters:
+        - a, b: Scalars or NumPy arrays.
+        
+        Returns:
+        - A scalar or NumPy array of computed values.
+        """
+        a = np.asarray(a)
+        b = np.asarray(b)
+
+        # Difference between -inf and -inf should be 0 in our case
+        with np.errstate(invalid='ignore'):
+            diff = a - b
+        diff = np.where(np.isnan(diff), 0, diff)
+        result = a + self.log1mexp(np.abs(diff))
+        
+        return result
+
 
     def log1mexp(self, x):
-        """ Compute log(1 - exp(-|x|)) in a numerically stable way.
-        This is based on the paper: "Accurately Computing log(1 - exp(-|a|))". Assesed by the Rmpfr package" by Martin Maechler, ETH Zurich. """
-        if x == 0: # this just serves to suppresses warnings from the log function
-            return float('-inf')
-        elif x < np.log(2):
-            return np.log(-np.expm1(-np.abs(x)))
-        else:
-            return np.log1p(-np.exp(-np.abs(x)))
+        """
+        Compute log(1 - exp(-|x|)) in a numerically stable way using vectorized operations.
+        Based on the paper: "Accurately Computing log(1 - exp(-|a|))".
+        Assesed by the Rmpfr package" by Martin Maechler, ETH Zurich.
+        
+        Parameters:
+        - x: Scalar or NumPy array.
+        
+        Returns:
+        - A scalar or NumPy array of the computed values.
+        """
+        # we need to handle the case where x is 0.
+        with np.errstate(divide='ignore'):
+            result = np.where(
+                x < np.log(2),
+                np.log(-np.expm1(-x)),  # More accurate for small x
+                np.log1p(-np.exp(-x))   # More accurate for larger x
+            )
+
+        return result
+
+
+    def swap_cost_with_edges(self, i, j, i_prime, j_prime):
+        """
+        Computes the swap cost between edges (i, j) and (i_prime, j_prime) for arrays of edge endpoints.
+        If i equals i_prime or j equals j_prime, assigns an infinite cost. Otherwise, calculates the swap cost
+        using the specified cost matrix and intensity differences based on edge types.
+
+        Parameters:
+        - i, j: Integers representing the first edge's endpoints.
+        - i_prime, j_prime: NumPy arrays representing the second edge's endpoints.
+
+        Returns:
+        - A NumPy array of swap costs.
+        """
+        # Vectorized check for infinity cost condition
+        infinite_cost_mask = (i == i_prime) | (j == j_prime)
+        res = np.full_like(i_prime, float('inf'), dtype=float)
+        
+        # Calculate only for valid cases (where cost is not infinite)
+        valid_indices = ~infinite_cost_mask
+        if np.any(valid_indices):
+            res[valid_indices] = (
+                self.cost[i, j_prime[valid_indices]] + self.cost[i_prime[valid_indices], j] -
+                self.cost[i, j] - self.cost[i_prime[valid_indices], j_prime[valid_indices]]
+            )
+
+            # Calculate intensity cost difference
+            intensity_cost_diff = ln(self.gamma) - ln(self.alpha) - ln(self.beta)
+
+            # Vectorized condition adjustments based on type conditions
+            types_ij = self.type(i, j)
+            types_ipjp = self.type(i_prime, j_prime)
+
+            res += np.where(
+                (types_ij == 0) & (types_ipjp == 3), intensity_cost_diff, 0
+            )
+            res += np.where(
+                (types_ij == 3) & (types_ipjp == 0), intensity_cost_diff, 0
+            )
+            res -= np.where(
+                (types_ij == 1) & (types_ipjp == 2), intensity_cost_diff, 0
+            )
+            res -= np.where(
+                (types_ij == 2) & (types_ipjp == 1), intensity_cost_diff, 0
+            )
+
+        return res
+
+
 
     def swap_cost(self, i, j, i_prime, j_prime):
         if i == i_prime or j == j_prime:
@@ -105,10 +182,10 @@ class LatentState:
         edges2 = self.graph.get_edges_of_type(2)
         edges3 = self.graph.get_edges_of_type(3)
 
-        log_prob_swap_with_0 = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in edges0])
-        log_prob_swap_with_1 = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in edges1])
-        log_prob_swap_with_2 = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in edges2])
-        log_prob_swap_with_3 = self.log_sum_exp([-self.swap_cost(i, j, i_, j_) for (i_, j_) in edges3])
+        log_prob_swap_with_0 = self.log_sum_exp(-self.swap_cost_with_edges(i, j, edges0["i"], edges0["j"]))
+        log_prob_swap_with_1 = self.log_sum_exp(-self.swap_cost_with_edges(i, j, edges1["i"], edges1["j"]))
+        log_prob_swap_with_2 = self.log_sum_exp(-self.swap_cost_with_edges(i, j, edges2["i"], edges2["j"]))
+        log_prob_swap_with_3 = self.log_sum_exp(-self.swap_cost_with_edges(i, j, edges3["i"], edges3["j"]))
 
         log_prob_swap = self.log_sum_exp([log_prob_swap_with_0, log_prob_swap_with_1, log_prob_swap_with_2, log_prob_swap_with_3])
 
@@ -123,86 +200,131 @@ class LatentState:
             self.graph.delete_edge(i, j)
             self.update_log_probs_on_remove(key)
 
+
+
     def update_log_probs_on_add(self, key):
+        """
+        Updates the log probabilities for all nodes in the graph when a new edge is added, using vectorized operations.
+        
+        Parameters:
+        - key: Tuple (i, j) representing the edge being added.
+        """
         graph = self.graph.numpy_graph()
         i, j = key
         edge_type = self.type(i, j)
         log_prob_key = f"log_prob_swap_with_{edge_type}"
+        
+        # Extract i_, j_ values as arrays for vectorized operations
+        i_values = np.array([entry['i'] for entry in graph])
+        j_values = np.array([entry['j'] for entry in graph])
+        old_log_probs = np.array(graph[log_prob_key])
+        
+        # Vectorized computation of swap costs
+        swap_costs = self.swap_cost_with_edges(i, j, i_values, j_values)
+        new_swap_probs = np.logaddexp(old_log_probs, -swap_costs)
+        
+        # Update graph's log_prob_key with new values
+        graph[log_prob_key] = new_swap_probs
+        
+        # Vectorized computation of new totals
+        log_prob_keys = [
+            "log_prob_swap_with_0",
+            "log_prob_swap_with_1",
+            "log_prob_swap_with_2",
+            "log_prob_swap_with_3"
+        ]
+        log_probs_matrix = np.array([graph[key] for key in log_prob_keys]).T  # Create a matrix of all relevant log probabilities
+        graph["log_prob_swap_total"] = self.log_sum_exp(log_probs_matrix, axis=1)
 
-        for k in range(len(graph)):
-            i_, j_ = graph[k]['i'], graph[k]['j']
-            old_log_prob = graph[log_prob_key][k]
-
-            swap_cost = self.swap_cost(i, j, i_, j_)
-            new_swap_prob = np.logaddexp(old_log_prob, -swap_cost)
-            
-            graph[log_prob_key][k] = new_swap_prob
-            new_total = self.log_sum_exp([
-                graph["log_prob_swap_with_0"][k],
-                graph["log_prob_swap_with_1"][k],
-                graph["log_prob_swap_with_2"][k],
-                graph["log_prob_swap_with_3"][k]
-            ])
-            graph["log_prob_swap_total"][k] =  new_total
 
     def update_log_probs_on_remove(self, key):
+        """
+        Updates the log probabilities for all nodes in the graph when an edge is removed, using vectorized operations.
+        
+        Parameters:
+        - key: Tuple (i, j) representing the edge being removed.
+        """
         i, j = key
         graph = self.graph.numpy_graph()
-        edge_type = self.type(i, j)  
+        edge_type = self.type(i, j)
         log_prob_key = f"log_prob_swap_with_{edge_type}"
-        for k in range(len(graph)):
-            i_, j_ = graph[k]['i'], graph[k]['j']
-            if i != i_ and j != j_:
-                old_log_prob = graph[log_prob_key][k]
-                graph[log_prob_key][k] = self.log_diff_exp(
-                    old_log_prob,
-                    -self.swap_cost(i_, j_, i, j)
-                )
-                graph["log_prob_swap_total"][k] = self.log_sum_exp([
-                    graph["log_prob_swap_with_0"][k],
-                    graph["log_prob_swap_with_1"][k],
-                    graph["log_prob_swap_with_2"][k],
-                    graph["log_prob_swap_with_3"][k]
-                ])
+
+        # Extract arrays for vectorized operations
+        i_values = graph['i']
+        j_values = graph['j']
+        old_log_probs = np.array(graph[log_prob_key])
+
+        # Vectorized computation of log_diff_exp where mask is True
+        updated_log_probs = self.log_diff_exp(old_log_probs, -self.swap_cost_with_edges(i, j, i_values, j_values))        
+        graph[log_prob_key] = updated_log_probs
+
+        # Vectorized computation of new totals
+        log_prob_keys = [
+            "log_prob_swap_with_0",
+            "log_prob_swap_with_1",
+            "log_prob_swap_with_2",
+            "log_prob_swap_with_3"
+        ]
+        log_probs_matrix = np.array([graph[key] for key in log_prob_keys]).T  # Create a matrix of all relevant log probabilities
+        graph["log_prob_swap_total"] = self.log_sum_exp(log_probs_matrix, axis=1)
 
     def update_intensities(self, alpha, beta, gamma):
-        """Update the intensities alpha, beta, and gamma, and adjust relevant log probabilities."""
+        """
+        Update the intensities alpha, beta, and gamma, and adjust relevant log probabilities in a vectorized manner.
+        """
         a_old, b_old, c_old = self.alpha, self.beta, self.gamma
         self.alpha, self.beta, self.gamma = alpha, beta, gamma
-    
+
         # Compute the change in log scale
-        change = (ln(alpha) + ln(beta) - ln(gamma)) 
-        change -= (ln(a_old) + ln(b_old) - ln(c_old))
-    
+        change = (ln(alpha) + ln(beta) - ln(gamma)) - (ln(a_old) + ln(b_old) - ln(c_old))
+
         # Update the log probabilities for each state
         graph = self.graph.numpy_graph()
-        for k in range(len(graph)):
-            i, j = graph['i'][k], graph['j'][k]
-            edge_type = self.type(i, j)
-            if edge_type == 0:
-                graph["log_prob_swap_with_3"][k] += change
-            elif edge_type == 3:
-                graph["log_prob_swap_with_0"][k] += change
-            elif edge_type == 1:
-                graph["log_prob_swap_with_2"][k] -= change
-            elif edge_type == 2:
-                graph["log_prob_swap_with_1"][k] -= change
-            graph["log_prob_swap_total"][k] = self.log_sum_exp([
-                graph["log_prob_swap_with_0"][k],
-                graph["log_prob_swap_with_1"][k],
-                graph["log_prob_swap_with_2"][k],
-                graph["log_prob_swap_with_3"][k]])
-        return 
+
+        # Extract values as arrays for vectorized computation
+        i_values = np.array(graph['i'])
+        j_values = np.array(graph['j'])
+        edge_types = np.array([self.type(i, j) for i, j in zip(i_values, j_values)])
+
+        # Vectorized updates based on edge type masks
+        graph["log_prob_swap_with_3"] += np.where(edge_types == 0, change, 0)
+        graph["log_prob_swap_with_0"] += np.where(edge_types == 3, change, 0)
+        graph["log_prob_swap_with_2"] -= np.where(edge_types == 1, change, 0)
+        graph["log_prob_swap_with_1"] -= np.where(edge_types == 2, change, 0)
+
+        # Vectorized computation of log_prob_swap_total
+        log_prob_keys = [
+            "log_prob_swap_with_0",
+            "log_prob_swap_with_1",
+            "log_prob_swap_with_2",
+            "log_prob_swap_with_3"
+        ]
+        log_probs_matrix = np.array([graph[key] for key in log_prob_keys]).T  # Create matrix of log probabilities
+        graph["log_prob_swap_total"] = self.log_sum_exp(log_probs_matrix, axis=1)
+
+        return
 
     def type(self, i, j):
-        if i < self.n and j < self.m:
-            return 0
-        elif i < self.n and j == self.m:
-            return 1
-        elif i == self.n and j < self.m:
-            return 2
-        else:
-            return 3
+        """
+        Determines the type based on the values of i and j using broadcasting-friendly operations.
+        Assumes i and j can be scalars or NumPy arrays of compatible shapes.
+    
+        Parameters:
+        - i: Integer or NumPy array of integers.
+        - j: Integer or NumPy array of integers.
+    
+        Returns:
+        - A NumPy array of types based on conditions applied to i and j.
+        """
+        i = np.asarray(i)
+        j = np.asarray(j)
+    
+        type_array = np.full_like(i, 3, dtype=int)  # Default type is 3
+        type_array[(i < self.n) & (j < self.m)] = 0
+        type_array[(i < self.n) & (j == self.m)] = 1
+        type_array[(i == self.n) & (j < self.m)] = 2
+        
+        return type_array
 
     def set_key_flow(self, key, flow):
         (i, j) = key

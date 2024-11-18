@@ -131,15 +131,19 @@ class MCMC:
 
     def sample_swap(self):
         """Sample a pair of keys to swap."""
-        keys = self.latent_state.keys()
+        graph = self.latent_state.graph.numpy_graph()
+        I = graph["i"]
+        J = graph["j"]
+
         log_probs = self.latent_state.log_prob_marginal()
 
         index1 = gumel_max(log_probs)
-        key1 = keys[index1]
+        i1, j1 = I[index1], J[index1]
+        key1 = (i1, j1)
     
-        log_probs = [-self.latent_state.swap_cost(*key1, *key) for key in keys]
+        log_probs = -self.latent_state.swap_cost_with_edges(i1, j1, I, J)
         index2 = gumel_max(log_probs)
-        key2 = keys[index2]
+        key2 = (I[index2], J[index2])
     
         return key1, key2
 

@@ -215,8 +215,8 @@ class LatentState:
         log_prob_key = f"log_prob_swap_with_{edge_type}"
         
         # Extract i_, j_ values as arrays for vectorized operations
-        i_values = np.array([entry['i'] for entry in graph])
-        j_values = np.array([entry['j'] for entry in graph])
+        i_values = graph['i']
+        j_values = graph['j']
         old_log_probs = np.array(graph[log_prob_key])
         
         # Vectorized computation of swap costs
@@ -284,7 +284,7 @@ class LatentState:
         # Extract values as arrays for vectorized computation
         i_values = np.array(graph['i'])
         j_values = np.array(graph['j'])
-        edge_types = np.array([self.type(i, j) for i, j in zip(i_values, j_values)])
+        edge_types = self.type(i_values, j_values)
 
         # Vectorized updates based on edge type masks
         graph["log_prob_swap_with_3"] += np.where(edge_types == 0, change, 0)
@@ -362,18 +362,20 @@ class LatentState:
 
     def keys(self):
         graph = self.graph.numpy_graph()
-        return [(edge['i'], edge['j']) for edge in graph]
+        return graph[['i', 'j']]
 
     def log_prob_swap(self, key1, key2):
         """Calculate the probability of swapping key1 with key2."""
         graph = self.graph.numpy_graph()
-        keys = [(edge['i'], edge['j']) for edge in graph]
-        log_probs = self.log_prob_marginal()
+        keys = graph[['i', 'j']]
+        ind1 = self.graph.get_edge_index(*key1)
+        ind2 = self.graph.get_edge_index(*key2)
 
-        l1 = log_probs[keys.index(key1)] - self.log_sum_exp(log_probs)
+        log_probs = self.log_prob_marginal()
+        l1 = log_probs[ind1] - self.log_sum_exp(log_probs)
     
-        log_probs = [-self.swap_cost(*key1, *key) for key in keys]
-        l2 = log_probs[keys.index(key2)] - self.log_sum_exp(log_probs)
+        log_probs = -self.swap_cost_with_edges(*key1, graph['i'], graph['j'])
+        l2 = log_probs[ind2] - self.log_sum_exp(log_probs)
     
         return l1 + l2
 

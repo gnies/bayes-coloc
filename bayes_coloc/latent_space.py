@@ -31,12 +31,9 @@ class LatentState:
     def compute_log_prob_matrix(self):
         """Compute the log probability matrix. This is used for testing purposes."""
         graph = self.graph.numpy_graph()
-        keys = [(edge['i'], edge['j']) for edge in graph]
-
-        log_prob_matrix = np.empty((len(keys), len(keys)))
-        for (i, j) in keys:
-            for (i_, j_) in keys:
-                log_prob_matrix[keys.index((i, j)), keys.index((i_, j_))] = -self.swap_cost(i, j, i_, j_)
+        log_prob_matrix = np.empty((len(graph), len(graph)))
+        for k in range(len(graph)):
+            log_prob_matrix[k, :] = -self.swap_cost_with_edges(graph['i'][k], graph['j'][k], graph['i'], graph['j'])
         return log_prob_matrix
 
     def log_prob_marginal_slow(self):

@@ -81,15 +81,14 @@ class DonutInteraction(MCMC):
         ##### initialize the latent state #####
 
         # create cost that will be used for the swap proposal in the latent state
-        proposal_cost = np.empty((self.nx+1, self.ny+1))
+        proposal_cost = np.zeros((self.nx+1, self.ny+1))
+        I = np.arange(self.nx)
+        J = np.arange(self.ny)
+        proposal_cost[-1, :-1] = -self.l_x(I, swap_proposal_params)
+        proposal_cost[:-1, -1] = -self.l_y(J, swap_proposal_params)
         for i in range(self.nx):
-            for j in range(self.ny):
-                proposal_cost[i, j] = -self.l_xy_index(i, j, swap_proposal_params)
-        for i in range(self.nx):
-            proposal_cost[i, self.ny] = -self.l_x_index(i, swap_proposal_params)
-        for j in range(self.ny):
-            proposal_cost[self.nx, j] = -self.l_y_index(j, swap_proposal_params)
-        proposal_cost[self.nx, self.ny] = 0
+            proposal_cost[i, :-1] -= self.l_xy_index(i, J, swap_proposal_params)
+
 
         alpha, beta, gamma = start_params['alpha'], start_params['beta'], start_params['gamma']
         self.latent_state = LatentState(self.nx, self.ny, alpha, beta, gamma , proposal_cost)

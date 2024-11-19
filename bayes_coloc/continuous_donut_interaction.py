@@ -25,12 +25,21 @@ class DonutInteraction(MCMC):
             The y coordinates of the data points.
         start_params : dict
             The starting parameters for the model. The dictionary should contain the following keys:
-            - 'scale': The scale of the interaction.
+            - 'scale':  The scale of the interaction.
             - 'radius': The radius of the interaction
-            - 'alpha': The intensity of the single x points.
-            - 'beta': The intensity of the single y points.
-            - 'gamma': The intensity of the interaction.
-            - 'area': The area of the observation window/region of interest.
+            - 'alpha':  The intensity of the single points in the first channel.
+            - 'beta':   The intensity of the single points in the second channel.
+            - 'gamma':  The intensity of the paired points.
+            - 'area':   The area of the observation window/region of interest.
+        swap_proposal_params : dict
+            The parameters for the swap proposal. The dictionary should contain the following keys:
+            - 'scale':  The scale of the interaction.
+            - 'radius': The radius of the interaction
+            - 'area':   The area of the observation window/region of interest.
+            - 'alpha':  The intensity of the single points in the first channel.
+            - 'beta':   The intensity of the single points in the second channel.
+            - 'gamma':  The intensity of the paired points.
+            The parameters alpha, beta, gamma, and area must be the same as in start_params.
         log_prior : function
             The log prior density function for the parameters.
         param_proposal : function

@@ -16,17 +16,19 @@ class MCMC:
                  save_latent_trajectory=False,
                  ):
         """
-        x: list of x coordinates
-        y: list of y coordinates
-        l_xy: function that takes two coordinates and returns log likelihood of a pair, third argument is a dictionary with parameters
-        l_x: function that takes one coordinate and returns log likelihood of a single x, second argument is a dictionary with parameters
-        l_y: function that takes one coordinate and returns log likelihood of a single y, second argument is a dictionary with parameters
-        start_params: dictionary with starting parameters. Needs to have entries "lam_gamma", "lam_mu", "lam_nu"
-        params_swap: dictionary with parameters for the swap proposal. Needs to have entries "alpha", "beta", "gamma" equal to start_params.
-        param_log_prior: function that takes a dictionary with parameters and returns the log prior
-        param_proposal: function that takes a dictionary with parameters and returns a new proposal, needs to be a symmetric proposal.
-        verbose: if True, print debug information
-        save_latent_trajectory: if True, save the latent trajectory
+        x: list of x values
+        y: list of y values
+        l_xy: function that returns the log likelihood of a pair of x and y values
+        l_x: function that returns the log likelihood of a single x value
+        l_y: function that returns the log likelihood of a single y value
+        start_params: dictionary with the starting parameters
+        This dictionary should contain the following keys:
+        alpha: the intensity of the number of single markers in the first channel.
+        beta: the intensity of the number of single markers in the second channel.
+        gamma: the intensity of the number of pairs of markers.
+        params_proposal: function that proposes a new set of parameters given the current parameters.
+        params_swap: function that proposes a new set of parameters given the current parameters.
+        It must also contain keys alpha, beta, and gamma, which are required to be the same as the starting parameters.
         """
 
         # set verbosity

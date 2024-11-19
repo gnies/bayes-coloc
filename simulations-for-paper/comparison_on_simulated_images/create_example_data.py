@@ -20,25 +20,25 @@ d = 2
 area = img_size**2
 scale = 2
 radius = 4
-setting_1 = {'lam_gamma': (100/3)/area, 'lam_mu': (200/3)/area, 'lam_nu': (200/3)/area}
-setting_2 = {'lam_gamma': (200/3)/area, 'lam_mu': (100/3)/area, 'lam_nu': (100/3)/area}
-setting_3 = {'lam_gamma': 0/area, 'lam_mu': 100/area, 'lam_nu': 100/area}
-setting_4 = {'lam_gamma': 100/area, 'lam_mu': 0/area, 'lam_nu': 0/area}
+setting_1 = {'gamma': (100/3)/area, 'alpha': (200/3)/area, 'beta': (200/3)/area}
+setting_2 = {'gamma': (200/3)/area, 'alpha': (100/3)/area, 'beta': (100/3)/area}
+setting_3 = {'gamma': 0/area, 'alpha': 100/area, 'beta': 100/area}
+setting_4 = {'gamma': 100/area, 'alpha': 0/area, 'beta': 0/area}
 
 settings = [setting_1, setting_2, setting_3, setting_4]
 for (i, setting) in enumerate(settings):
-    lam_gamma = setting['lam_gamma']
-    lam_mu = setting['lam_mu']
-    lam_nu = setting['lam_nu']
+    gamma = setting['gamma']
+    alpha = setting['alpha']
+    beta = setting['beta']
 
-    true_params = {'lam_gamma': lam_gamma, 'lam_mu': lam_mu, 'lam_nu': lam_nu,
+    true_params = {'gamma': gamma, 'alpha': alpha, 'beta': beta,
         'scale': scale, 'radius': radius, 'area': area}
     
     ### Data generation 
     
-    n_gamma = np.random.poisson(lam=true_params['lam_gamma']*area)
-    n_mu = np.random.poisson(lam=true_params['lam_mu']*area)
-    n_nu = np.random.poisson(lam=true_params['lam_nu']*area)
+    n_gamma = np.random.poisson(lam=true_params['gamma']*area)
+    n_mu = np.random.poisson(lam=true_params['alpha']*area)
+    n_nu = np.random.poisson(lam=true_params['beta']*area)
     print(n_gamma, n_mu, n_nu)
     
     # Sample points in space 

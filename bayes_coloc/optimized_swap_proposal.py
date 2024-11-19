@@ -73,16 +73,16 @@ class MCMC:
             self.latent_trajectory = []
 
         ##### initialize the latent state #####
+        I = np.arange(self.nx)
+        J = np.arange(self.ny)
 
         # create cost that will be used for the swap proposal in the latent state
-        proposal_cost = np.empty((self.nx+1, self.ny+1))
+        proposal_cost = np.zeros((self.nx+1, self.ny+1))
+        proposal_cost[-1, :-1] = -self.l_x(I, params_swap)
+        proposal_cost[:-1, -1] = -self.l_y(J, params_swap)
         for i in range(self.nx):
-            for j in range(self.ny):
-                proposal_cost[i, j] = -self.l_xy_index(i, j, params_swap)
-        for i in range(self.nx):
-            proposal_cost[i, self.ny] = -self.l_x_index(i, params_swap)
-        for j in range(self.ny):
-            proposal_cost[self.nx, j] = -self.l_y_index(j, params_swap)
+            proposal_cost[i, :-1] -= self.l_xy_index(i, J, params_swap)
+
 
         alpha, beta, gamma = start_params['alpha'], start_params['beta'], start_params['gamma']
         self.latent_state = LatentState(self.nx, self.ny, alpha, beta, gamma , proposal_cost)

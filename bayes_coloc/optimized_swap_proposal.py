@@ -19,16 +19,16 @@ class MCMC:
         x: list of x values
         y: list of y values
         l_xy: function that returns the log likelihood of a pair of x and y values
-        l_x: function that returns the log likelihood of a single x value
-        l_y: function that returns the log likelihood of a single y value
+        l_x:  function that returns the log likelihood of a single x value
+        l_y:  function that returns the log likelihood of a single y value
         start_params: dictionary with the starting parameters
-        This dictionary should contain the following keys:
-        alpha: the intensity of the number of single markers in the first channel.
-        beta: the intensity of the number of single markers in the second channel.
-        gamma: the intensity of the number of pairs of markers.
+            This dictionary should include the following keys:
+            alpha: the intensity of the number of single markers in the first channel.
+            beta:  the intensity of the number of single markers in the second channel.
+            gamma: the intensity of the number of pairs of markers.
         params_proposal: function that proposes a new set of parameters given the current parameters.
         params_swap: function that proposes a new set of parameters given the current parameters.
-        It must also contain keys alpha, beta, and gamma, which are required to be the same as the starting parameters.
+            It must also contain keys alpha, beta, and gamma, which are required to be the same as the starting parameters.
         """
 
         # set verbosity

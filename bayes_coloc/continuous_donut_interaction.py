@@ -5,6 +5,7 @@ from icecream import ic
 
 from numpy import log as ln
 from scipy.stats import ncx2
+from scipy.special import gammaln
 
 class DonutInteraction(MCMC):
     def __init__(self, x, y,
@@ -114,6 +115,11 @@ def l_xy(x, y, params):
     radius = params['radius']
     area = params['area']
 
+    # determine dimensioni
+    if x.ndim == 1:
+        df = len(x)
+    else:
+        df = x.shape[1]
 
     # compute log of joint intensity (we start by zero)
     lxy = 0
@@ -126,11 +132,20 @@ def l_xy(x, y, params):
     # account for change of variables to polar in 2d
     sq_dist = np.sum((x-y)**2, axis=-1)
     dist = np.sqrt(sq_dist)
-    lxy -= ln(dist)
+    zero_dist = dist == 0
+    log_d0 = (
+        .5 * (radius / scale) ** 2
+        -(df / 2.0) * ln(2.0)
+        -(df - 1.0) * ln(scale)
+        -ln(radius)
+        -(df / 2.0) * ln(np.pi)
+        -ln(area))
+
+
+    lxy += (-df+1)*ln(dist)
 
     # compute log of joint intensity
     nc = radius/scale
-    df = 2 # modify for general case
 
     # distributes as non central chi (without square)
     v = dist/scale
@@ -142,12 +157,18 @@ def l_xy(x, y, params):
     lxy += log_noncentral_chi_pdf(v, df, nc)
 
     # random direction
-    lxy -= ln(2*np.pi)
-
-    # for general case this should work
-    # lxy -= ln(np.pi**(df/2)/np.math.factorial(int(df/2+1)))
-    
-    return lxy
+    lxy -= df/2 * ln(np.pi)
+    lxy += gammaln(df/2)
+    lxy -= ln(2)
+    if (x.ndim == 1) and (y.ndim == 1):
+        if zero_dist:
+            res = log_d0
+        else:
+            res = lxy
+    else:
+        res = lxy
+        res[zero_dist] = log_d0
+    return res
 
 def l_x(x, params):
     """ Logarithm of intensity function for x"""
